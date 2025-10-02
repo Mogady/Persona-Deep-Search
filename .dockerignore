@@ -1,0 +1,75 @@
+# Git files
+.git
+.gitignore
+.gitattributes
+
+# Python cache
+__pycache__
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# Virtual environments
+.venv
+venv/
+ENV/
+env/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*.swn
+.DS_Store
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+*.cover
+.tox/
+
+# Documentation
+*.md
+!README.md
+docs/
+
+# Logs
+logs/
+*.log
+
+# Reports
+reports/
+
+# Database
+*.db
+*.sqlite
+*.sqlite3
+
+# Environment files
+.env
+.env.*
+!.env.example
+
+# Terraform
+infra/terraform/.terraform/
+infra/terraform/*.tfstate
+infra/terraform/*.tfstate.backup
+infra/terraform/.terraform.lock.hcl
+
+# Build artifacts
+build/
+dist/
+*.egg-info/
+
+# Jupyter notebooks
+*.ipynb
+.ipynb_checkpoints/
+
+# UV lock file
+uv.lock
+
+# Test files
+tests/
