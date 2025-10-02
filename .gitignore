@@ -6,3 +6,5 @@ dist/
 wheels/
 .chainlit
 *.egg-info
+
+.env

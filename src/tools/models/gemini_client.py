@@ -656,3 +656,137 @@ Respond with a single word: YES or NO"""
             self.logger.error(f"Content filtering failed: {e}")
             # Default to True on error to avoid losing potentially valuable content
             return True
+
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=2, max=10),
+        reraise=True
+    )
+    def generate_embeddings(
+        self,
+        texts: List[str],
+        task_type: str = "SEMANTIC_SIMILARITY"
+    ) -> List[List[float]]:
+        """
+        Generate embeddings for texts using Gemini embedding model.
+
+        Args:
+            texts: List of texts to embed
+            task_type: Type of task (SEMANTIC_SIMILARITY, RETRIEVAL_QUERY, etc.)
+
+        Returns:
+            List of embedding vectors (each 768 dimensions)
+
+        Raises:
+            Exception: If embedding generation fails
+        """
+        try:
+            self.logger.info(f"Generating embeddings for {len(texts)} texts")
+
+            # Use the embedding model (gemini-embedding-001)
+            embeddings = []
+
+            for text in texts:
+                result = genai.embed_content(
+                    model="models/embedding-001",
+                    content=text,
+                    task_type=task_type
+                )
+                embeddings.append(result['embedding'])
+
+            self.logger.info(
+                f"Generated {len(embeddings)} embeddings, "
+                f"dimension: {len(embeddings[0]) if embeddings else 0}"
+            )
+
+            return embeddings
+
+        except Exception as e:
+            self.logger.error(f"Embedding generation failed: {e}")
+            raise
+
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=2, max=10),
+        reraise=True
+    )
+    def extract_entities_advanced(
+        self,
+        text: str,
+        temperature: float = 0.1
+    ) -> Dict[str, List[str]]:
+        """
+        Extract named entities using Gemini's advanced understanding.
+        More accurate than regex-based extraction.
+
+        Args:
+            text: Text to extract entities from
+            temperature: Temperature for generation (default: 0.1 for consistency)
+
+        Returns:
+            Dict with entity lists (people, companies, locations)
+
+        Raises:
+            Exception: If entity extraction fails
+        """
+        try:
+            self.logger.info("Extracting entities using Gemini NER")
+
+            prompt = f"""Extract all named entities from the following text.
+
+Text:
+{text}
+
+Instructions:
+- Extract PEOPLE: Full names of individuals (normalize capitalization)
+- Extract COMPANIES: Business organizations, corporations, startups
+- Extract LOCATIONS: Cities, states, countries, regions
+
+Return ONLY valid JSON in this exact format:
+{{
+  "people": ["Person Name 1", "Person Name 2"],
+  "companies": ["Company 1", "Company 2"],
+  "locations": ["Location 1", "Location 2"]
+}}
+
+Rules:
+- Normalize names (e.g., "satya nadella" → "Satya Nadella")
+- Handle abbreviations (e.g., "MSFT" → "Microsoft")
+- Remove duplicates
+- Return empty arrays if no entities found
+- Do NOT include explanations, only JSON"""
+
+            generation_config = genai.types.GenerationConfig(
+                temperature=temperature
+            )
+
+            response = self._call_api_with_retry(prompt, generation_config=generation_config)
+
+            # Log token usage
+            self._log_token_usage(response, "extract_entities_advanced")
+
+            # Parse JSON response
+            entities = self._parse_json_from_markdown(response.text)
+
+            # Validate structure
+            if not isinstance(entities, dict):
+                entities = {"people": [], "companies": [], "locations": []}
+
+            # Ensure all keys exist
+            for key in ["people", "companies", "locations"]:
+                if key not in entities or not isinstance(entities[key], list):
+                    entities[key] = []
+
+            self.logger.info(
+                f"Extracted entities: "
+                f"{len(entities['people'])} people, "
+                f"{len(entities['companies'])} companies, "
+                f"{len(entities['locations'])} locations"
+            )
+
+            return entities
+
+        except Exception as e:
+            self.logger.error(f"Advanced entity extraction failed: {e}")
+            # Return empty structure on error
+            return {"people": [], "companies": [], "locations": []}
