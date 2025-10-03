@@ -6,13 +6,14 @@ by accepting the model name as a parameter.
 """
 
 import json
-import re
 from typing import List, Dict, Optional, Any
 from tenacity import retry, stop_after_attempt, wait_exponential
 import google.generativeai as genai
 from google.api_core import exceptions
 
 from src.utils.logger import get_logger
+from src.utils.json_parser import parse_json_object
+from src.utils.config import get_config
 
 
 class GeminiClient:
@@ -25,28 +26,29 @@ class GeminiClient:
     - Any other Gemini model variants
     """
 
-    def __init__(self, api_key: str, model_name: str, max_retries: int = 3):
+    def __init__(self, api_key: str, model_name: str, max_retries: int = None):
         """
         Initialize the Gemini client.
 
         Args:
             api_key: Google API key for authentication
             model_name: Name of the Gemini model to use
-            max_retries: Maximum number of retry attempts (default: 3)
+            max_retries: Maximum number of retry attempts (default: from config)
         """
+        self.config = get_config()
         self.api_key = api_key
         self.model_name = model_name
-        self.max_retries = max_retries
+        self.max_retries = max_retries or self.config.performance.api_retry_attempts
         self.logger = get_logger(__name__)
 
         # Initialize Gemini client
         genai.configure(api_key=self.api_key)
         self.model = genai.GenerativeModel(self.model_name)
 
-        self.logger.info(f"Initialized GeminiClient with model: {self.model_name}")
+        self.logger.info(f"Initialized GeminiClient with model: {self.model_name}, max_retries: {self.max_retries}")
 
     @retry(
-        stop=stop_after_attempt(3),
+        stop=stop_after_attempt(3),  # Will be made dynamic in _call_api_with_retry
         wait=wait_exponential(multiplier=1, min=2, max=10),
         reraise=True
     )
@@ -184,36 +186,6 @@ class GeminiClient:
             self.logger.error(f"Generation failed: {e}")
             raise
 
-    def _parse_json_from_markdown(self, text: str) -> dict:
-        """
-        Parse JSON from markdown code blocks.
-
-        Args:
-            text: Text potentially containing JSON in markdown blocks
-
-        Returns:
-            dict: Parsed JSON object
-
-        Raises:
-            ValueError: If JSON parsing fails
-        """
-        # Try to find JSON in markdown code blocks
-        json_pattern = r'```(?:json)?\s*(\{.*?\}|\[.*?\])\s*```'
-        matches = re.findall(json_pattern, text, re.DOTALL)
-
-        if matches:
-            json_text = matches[0]
-        else:
-            # Try to parse the entire text as JSON
-            json_text = text.strip()
-
-        try:
-            return json.loads(json_text)
-        except json.JSONDecodeError as e:
-            self.logger.error(f"Failed to parse JSON: {e}")
-            self.logger.debug(f"Text to parse: {text[:500]}")
-            raise ValueError(f"Invalid JSON response: {e}")
-
     def generate_structured(
         self,
         prompt: str,
@@ -251,8 +223,8 @@ class GeminiClient:
             # Log token usage
             self._log_token_usage(response, "generate_structured")
 
-            # Parse JSON from response
-            result = self._parse_json_from_markdown(response.text)
+            # Parse JSON from response (using unified parser)
+            result = parse_json_object(response.text)
 
             # Basic schema validation (check required keys)
             if isinstance(schema, dict):
@@ -292,30 +264,30 @@ class GeminiClient:
             )
 
             prompt = f"""Extract all named entities from the following text.
-For each entity, identify its type (person, organization, location, date, money) and the exact text.
+                        For each entity, identify its type (person, organization, location, date, money) and the exact text.
 
-Text: {text}
+                        Text: {text}
 
-Respond with JSON in this format:
-```json
-{{
-    "entities": [
-        {{"type": "person", "text": "John Doe"}},
-        {{"type": "organization", "text": "Acme Corp"}},
-        {{"type": "location", "text": "New York"}},
-        {{"type": "date", "text": "2020"}},
-        {{"type": "money", "text": "$1M"}}
-    ]
-}}
-```"""
+                        Respond with JSON in this format:
+                        ```json
+                        {{
+                            "entities": [
+                                {{"type": "person", "text": "John Doe"}},
+                                {{"type": "organization", "text": "Acme Corp"}},
+                                {{"type": "location", "text": "New York"}},
+                                {{"type": "date", "text": "2020"}},
+                                {{"type": "money", "text": "$1M"}}
+                            ]
+                        }}
+                        ```"""
 
             response = self._call_api_with_retry(prompt)
 
             # Log token usage
             self._log_token_usage(response, "extract_entities")
 
-            # Parse JSON from response
-            result = self._parse_json_from_markdown(response.text)
+            # Parse JSON from response (using unified parser)
+            result = parse_json_object(response.text)
 
             entities = result.get("entities", [])
 
@@ -389,8 +361,8 @@ Respond with JSON in this format:
             # Log token usage
             self._log_token_usage(response, "extract_facts")
 
-            # Parse JSON from response
-            result = self._parse_json_from_markdown(response.text)
+            # Parse JSON from response (using unified parser)
+            result = parse_json_object(response.text)
 
             facts = result.get("facts", [])
 
@@ -485,27 +457,27 @@ Respond with JSON in this format:
 
             prompt = f"""Generate {num_queries} diverse search queries to research "{target_name}".
 
-Current iteration: {iteration}
-Strategy: {strategy}
+                        Current iteration: {iteration}
+                        Strategy: {strategy}
 
-Facts collected so far:
-{facts_summary if facts_summary else "None yet"}
+                        Facts collected so far:
+                        {facts_summary if facts_summary else "None yet"}
 
-Topics already explored: {explored_str}
+                        Topics already explored: {explored_str}
 
-Requirements:
-1. Generate {num_queries} unique search queries
-2. Each query should follow the strategy for iteration {iteration}
-3. Avoid repeating topics already explored
-4. Queries should be specific and actionable
-5. Vary the query structure (biographical, investigative, contextual)
+                        Requirements:
+                        1. Generate {num_queries} unique search queries
+                        2. Each query should follow the strategy for iteration {iteration}
+                        3. Avoid repeating topics already explored
+                        4. Queries should be specific and actionable
+                        5. Vary the query structure (biographical, investigative, contextual)
 
-Return ONLY a JSON array of query strings:
-["query 1", "query 2", "query 3"]"""
+                        Return ONLY a JSON array of query strings:
+                        ["query 1", "query 2", "query 3"]"""
 
-            # Use higher temperature for creativity
+            # Use temperature from config for query generation
             generation_config = genai.types.GenerationConfig(
-                temperature=0.9
+                temperature=self.config.performance.query_generation_temperature
             )
 
             response = self._call_api_with_retry(prompt, generation_config=generation_config)
@@ -617,19 +589,19 @@ Return ONLY a JSON array of query strings:
 
             prompt = f"""Evaluate if this content is relevant to researching "{target_name}".
 
-Content:
-{truncated_content}
+                        Content:
+                        {truncated_content}
 
-Is this content relevant? Consider:
-1. Does it mention {target_name} or closely related entities?
-2. Does it provide biographical, professional, financial, or behavioral information?
-3. Is the information substantive (not just a passing mention)?
+                        Is this content relevant? Consider:
+                        1. Does it mention {target_name} or closely related entities?
+                        2. Does it provide biographical, professional, financial, or behavioral information?
+                        3. Is the information substantive (not just a passing mention)?
 
-Respond with a single word: YES or NO"""
+                        Respond with a single word: YES or NO"""
 
-            # Use low temperature for consistent decisions
+            # Use categorization temperature for consistent decisions
             generation_config = genai.types.GenerationConfig(
-                temperature=0.1
+                temperature=self.config.performance.categorization_temperature
             )
 
             response = self._call_api_with_retry(prompt, generation_config=generation_config)
@@ -686,13 +658,12 @@ Respond with a single word: YES or NO"""
             # Use the embedding model (gemini-embedding-001)
             embeddings = []
 
-            for text in texts:
-                result = genai.embed_content(
-                    model="models/embedding-001",
-                    content=text,
-                    task_type=task_type
-                )
-                embeddings.append(result['embedding'])
+            results = genai.embed_content(
+                model="models/embedding-001",
+                content=[texts],
+                task_type=task_type
+            )
+            embeddings= [res['embedding'] for res in results['embedding']]
 
             self.logger.info(
                 f"Generated {len(embeddings)} embeddings, "
@@ -734,27 +705,27 @@ Respond with a single word: YES or NO"""
 
             prompt = f"""Extract all named entities from the following text.
 
-Text:
-{text}
+                        Text:
+                        {text}
 
-Instructions:
-- Extract PEOPLE: Full names of individuals (normalize capitalization)
-- Extract COMPANIES: Business organizations, corporations, startups
-- Extract LOCATIONS: Cities, states, countries, regions
+                        Instructions:
+                        - Extract PEOPLE: Full names of individuals (normalize capitalization)
+                        - Extract COMPANIES: Business organizations, corporations, startups
+                        - Extract LOCATIONS: Cities, states, countries, regions
 
-Return ONLY valid JSON in this exact format:
-{{
-  "people": ["Person Name 1", "Person Name 2"],
-  "companies": ["Company 1", "Company 2"],
-  "locations": ["Location 1", "Location 2"]
-}}
+                        Return ONLY valid JSON in this exact format:
+                        {{
+                        "people": ["Person Name 1", "Person Name 2"],
+                        "companies": ["Company 1", "Company 2"],
+                        "locations": ["Location 1", "Location 2"]
+                        }}
 
-Rules:
-- Normalize names (e.g., "satya nadella" → "Satya Nadella")
-- Handle abbreviations (e.g., "MSFT" → "Microsoft")
-- Remove duplicates
-- Return empty arrays if no entities found
-- Do NOT include explanations, only JSON"""
+                        Rules:
+                        - Normalize names (e.g., "satya nadella" → "Satya Nadella")
+                        - Handle abbreviations (e.g., "MSFT" → "Microsoft")
+                        - Remove duplicates
+                        - Return empty arrays if no entities found
+                        - Do NOT include explanations, only JSON"""
 
             generation_config = genai.types.GenerationConfig(
                 temperature=temperature
@@ -765,8 +736,8 @@ Rules:
             # Log token usage
             self._log_token_usage(response, "extract_entities_advanced")
 
-            # Parse JSON response
-            entities = self._parse_json_from_markdown(response.text)
+            # Parse JSON response (using unified parser)
+            entities = parse_json_object(response.text)
 
             # Validate structure
             if not isinstance(entities, dict):

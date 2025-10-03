@@ -1,12 +1,18 @@
 from typing import Dict, List, Optional, Set, Tuple
 from datetime import datetime
 from collections import defaultdict
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from src.tools.models import ModelFactory
 from src.utils.logger import get_logger
+from src.utils.config import Config
+from src.utils.rate_limiter import get_llm_rate_limiter
+from src.database.repository import ResearchRepository
+from src.utils.json_parser import parse_json_array
 from src.prompts.templates.connection_mapper_prompt import CONNECTION_MAPPER_PROMPT
 import json
 import re
 import numpy as np
+from src.utils.similarity import cosine_similarity
 
 class ConnectionMapperNode:
     """
@@ -46,51 +52,85 @@ class ConnectionMapperNode:
         "university": "Educational",
     }
 
-    def __init__(self):
+    def __init__(self, config: Config, repository: ResearchRepository):
+        """
+        Initialize the connection mapper with Gemini Pro.
+
+        Args:
+            config: Configuration object with all settings
+            repository: Database repository for persistence
+        """
+        self.config = config
+        self.repository = repository
         self.client = ModelFactory.get_optimal_model_for_task("connection_mapping") # Gemini Pro
         self.logger = get_logger(__name__)
 
         # Get Gemini client for embeddings (for semantic deduplication)
         self.gemini_client = ModelFactory.get_optimal_model_for_task("extraction")
 
+        # Load config values
+        self.temperature = config.performance.connection_mapping_temperature
+        self.max_concurrent_llm_calls = config.performance.max_concurrent_llm_calls
+
+        # Initialize rate limiter for LLM API calls
+        self.rate_limiter = get_llm_rate_limiter(max_concurrent=self.max_concurrent_llm_calls)
+
+        self.logger.info(
+            f"Initialized ConnectionMapperNode with Gemini Pro and RateLimiter "
+            f"(temp: {self.temperature}, concurrency: {self.max_concurrent_llm_calls})"
+        )
+
     def execute(self, state: Dict) -> Dict:
         """
-        Extracts connections from facts and adds them to the state.
+        Extracts connections from NEW facts and adds them to the state.
 
         Args:
-            state: Current ResearchState with 'collected_facts'.
+            state: Current ResearchState with:
+                - new_facts: List[Dict] (newly extracted facts in current iteration)
+                - collected_facts: List[Dict] (all accumulated facts for context)
 
         Returns:
-            Updated state with 'connections' populated.
+            Updated state with new 'connections' appended.
         """
         self.logger.info("Executing Connection Mapper Node")
 
-        facts = state.get('collected_facts', [])
-        if not facts:
-            self.logger.info("No facts to map connections from.")
+        new_facts = state.get('new_facts', [])
+        collected_facts = state.get('collected_facts', [])
+
+        if not new_facts:
+            self.logger.info("No new facts to map connections from in this iteration.")
             if 'connections' not in state:
                 state['connections'] = []
             return state
 
-        # Check if facts contain entities
+        self.logger.info(
+            f"Mapping connections from {len(new_facts)} new facts "
+            f"(total accumulated: {len(collected_facts)})"
+        )
+
+        # Check if new facts contain entities
         has_entities = any(
             'entities' in fact and fact.get('entities')
-            for fact in facts
+            for fact in new_facts
         )
 
         if not has_entities:
-            self.logger.warning("No entities found in facts. Skipping connection mapping.")
+            self.logger.warning("No entities found in new facts. Skipping connection mapping.")
             if 'connections' not in state:
                 state['connections'] = []
             return state
 
-        prompt = CONNECTION_MAPPER_PROMPT.format(facts=json.dumps(facts, indent=2))
+        # Serialize new facts with datetime handling
+        facts_serializable = self._make_facts_serializable(new_facts)
+        prompt = CONNECTION_MAPPER_PROMPT.format(facts=json.dumps(facts_serializable, indent=2))
 
         try:
-            response = self.client.generate(prompt)
+            # Use rate limiter to control concurrent API calls
+            with self.rate_limiter.acquire():
+                response = self.client.generate(prompt)
 
             # Parse JSON with markdown extraction
-            connections = self._parse_json_from_markdown(response)
+            connections = parse_json_array(response)
 
             if not connections:
                 self.logger.warning("No connections found in LLM response.")
@@ -101,14 +141,14 @@ class ConnectionMapperNode:
             # Validate and clean connections
             valid_connections = []
             for conn in connections:
-                validated_conn = self._validate_connection_structure(conn, facts)
+                validated_conn = self._validate_connection_structure(conn, new_facts)
                 if validated_conn:
                     valid_connections.append(validated_conn)
 
             self.logger.info(f"Validated {len(valid_connections)} out of {len(connections)} connections.")
 
             # Calibrate confidence based on evidence
-            calibrated_connections = [self._calibrate_confidence(conn, facts) for conn in valid_connections]
+            calibrated_connections = [self._calibrate_confidence(conn, new_facts) for conn in valid_connections]
 
             # Handle bidirectional relationships
             normalized_connections = [self._normalize_bidirectional(conn) for conn in calibrated_connections]
@@ -127,6 +167,30 @@ class ConnectionMapperNode:
 
             self.logger.info(f"Added {len(unique_connections)} unique connections (deduplicated from {len(valid_connections)}).")
 
+            # Save connections to database
+            session_id = state.get("session_id")
+            if session_id and unique_connections:
+                try:
+                    # Convert connections to database format
+                    db_connections = []
+                    for conn in unique_connections:
+                        db_connections.append({
+                            "session_id": session_id,
+                            "entity_a": conn["entity_a"],
+                            "entity_b": conn["entity_b"],
+                            "relationship_type": conn["relationship_type"],
+                            "evidence": conn["evidence"],
+                            "confidence": conn["confidence"]
+                        })
+
+                    # Batch save to database
+                    saved_count = self.repository.save_connections_batch(db_connections)
+                    self.logger.info(f"Saved {saved_count}/{len(db_connections)} connections to database")
+
+                except Exception as e:
+                    self.logger.error(f"Failed to save connections to database: {e}", exc_info=True)
+                    # Don't fail the workflow if DB save fails
+
         except json.JSONDecodeError as e:
             self.logger.error(f"Failed to parse JSON from connection mapping response: {e}")
             if 'connections' not in state:
@@ -138,48 +202,6 @@ class ConnectionMapperNode:
 
         return state
 
-    def _parse_json_from_markdown(self, response: str) -> List[Dict]:
-        """
-        Parse JSON from LLM response, handling markdown code blocks.
-
-        Args:
-            response: Raw LLM response text
-
-        Returns:
-            List of connection dictionaries
-        """
-        if not response or not response.strip():
-            self.logger.warning("Empty response from LLM.")
-            return []
-
-        # Try to extract JSON from markdown code blocks
-        json_pattern = r'```(?:json)?\s*(\[.*?\])\s*```'
-        match = re.search(json_pattern, response, re.DOTALL)
-
-        if match:
-            json_str = match.group(1)
-            try:
-                return json.loads(json_str)
-            except json.JSONDecodeError:
-                self.logger.warning("Failed to parse JSON from markdown block.")
-
-        # Try to parse the entire response as JSON
-        try:
-            return json.loads(response)
-        except json.JSONDecodeError:
-            pass
-
-        # Try to find JSON array in the response
-        array_pattern = r'\[.*?\]'
-        match = re.search(array_pattern, response, re.DOTALL)
-        if match:
-            try:
-                return json.loads(match.group(0))
-            except json.JSONDecodeError:
-                pass
-
-        self.logger.error("Could not extract valid JSON from response.")
-        return []
 
     def _validate_connection_structure(self, connection: Dict, facts: List[Dict]) -> Optional[Dict]:
         """
@@ -463,7 +485,11 @@ class ConnectionMapperNode:
 
         if embeddings and len(embeddings) == len(connections):
             # Calculate cosine similarity matrix
-            similarity_matrix = self._cosine_similarity_matrix(embeddings)
+            n_connections = len(embeddings)
+            similarity_matrix = np.zeros((n_connections, n_connections))
+            embeddings_array = np.array(embeddings)
+            for i in range(n_connections):
+                similarity_matrix[i] = cosine_similarity(embeddings_array[i], embeddings_array)
 
             # Group similar connections (threshold: 0.90 - stricter than risks)
             groups = self._group_by_similarity(similarity_matrix, threshold=0.90)
@@ -609,3 +635,23 @@ class ConnectionMapperNode:
         self.logger.info(f"Average Evidence per Connection: {avg_evidence:.1f}")
         self.logger.info(f"Connection Density: {density:.2f}")
         self.logger.info(f"Total Evidence Items: {total_evidence}")
+
+    def _make_facts_serializable(self, facts: List[Dict]) -> List[Dict]:
+        """
+        Convert facts to JSON-serializable format by handling datetime objects.
+
+        Args:
+            facts: List of fact dictionaries
+
+        Returns:
+            List of facts with datetime objects converted to ISO strings
+        """
+        serializable_facts = []
+        for fact in facts:
+            fact_copy = fact.copy()
+            # Convert datetime objects to ISO strings
+            for key, value in fact_copy.items():
+                if isinstance(value, datetime):
+                    fact_copy[key] = value.isoformat()
+            serializable_facts.append(fact_copy)
+        return serializable_facts

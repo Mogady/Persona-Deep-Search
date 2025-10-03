@@ -5,19 +5,25 @@ This node processes raw search results and extracts atomic, verified facts
 using Gemini Pro's advanced NER and extraction capabilities.
 """
 
-from typing import Dict, List, Any, Optional
+from typing import Dict, List
 from datetime import datetime
 from collections import defaultdict
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import re
 
 from src.tools.models import ModelFactory
 from src.utils.logger import get_logger
+from src.utils.config import Config
+from src.utils.rate_limiter import get_llm_rate_limiter
+from src.database.repository import ResearchRepository
 from src.tools.search.models import SearchResult
 from src.prompts.templates.extractor_prompt import (
     EXTRACTION_SYSTEM_PROMPT,
     EXTRACTION_USER_PROMPT,
     BATCH_EXTRACTION_PROMPT
 )
+from src.utils.json_parser import parse_json_object, parse_json_array
+
 
 
 class ContentExtractorNode:
@@ -46,11 +52,29 @@ class ContentExtractorNode:
         "quora", "yahoo.answers", "pinterest"
     }
 
-    def __init__(self):
-        """Initialize the content extractor with Gemini Pro."""
+    def __init__(self, config: Config, repository: ResearchRepository):
+        """
+        Initialize the content extractor with Gemini Pro.
+
+        Args:
+            config: Configuration object with all settings
+            repository: Database repository for persistence
+        """
+        self.config = config
+        self.repository = repository
         self.client = ModelFactory.get_optimal_model_for_task("extraction")  # Gemini Pro
+        self.flash_client = ModelFactory.get_optimal_model_for_task("categorization")  # Gemini Flash for fast categorization
         self.logger = get_logger(__name__)
-        self.logger.info("Initialized ContentExtractorNode with Gemini Pro")
+
+        # Load config values
+        self.batch_size = config.performance.extraction_batch_size
+        self.temperature = config.performance.fact_extraction_temperature
+        self.categorization_temp = config.performance.categorization_temperature
+        self.max_concurrent_llm_calls = config.performance.max_concurrent_llm_calls
+
+        # Initialize rate limiter for LLM API calls
+        self.rate_limiter = get_llm_rate_limiter(max_concurrent=self.max_concurrent_llm_calls)
+
 
     def execute(self, state: Dict) -> Dict:
         """
@@ -58,7 +82,7 @@ class ContentExtractorNode:
 
         Args:
             state: Current ResearchState dict with:
-                - raw_search_results: List[SearchResult] from Agent 4
+                - raw_search_results: List[SearchResult]
                 - target_name: str
                 - collected_facts: List[Dict] (append new facts)
 
@@ -92,9 +116,17 @@ class ContentExtractorNode:
             f"(filtered out {len(new_facts) - len(filtered_facts)} low-quality)"
         )
 
-        # Add to collected facts
+        # Set new_facts for current iteration (for downstream optimization)
+        state["new_facts"] = filtered_facts
+
+        # Add to collected facts (accumulate across iterations)
         collected_facts.extend(filtered_facts)
         state["collected_facts"] = collected_facts
+
+        self.logger.info(
+            f"Total accumulated facts: {len(collected_facts)} "
+            f"(+{len(filtered_facts)} new this iteration)"
+        )
 
         # Log extraction metrics
         self._log_extraction_metrics(filtered_facts)
@@ -107,9 +139,9 @@ class ContentExtractorNode:
         target_name: str
     ) -> List[Dict]:
         """
-        Extract facts from multiple results efficiently (batch processing).
+        Extract facts from multiple results efficiently with concurrent batch processing.
 
-        Processes 5-10 results per API call to reduce costs.
+        Processes batches in parallel using ThreadPoolExecutor and RateLimiter.
 
         Args:
             results: List of search results
@@ -119,73 +151,130 @@ class ContentExtractorNode:
             List of extracted facts
         """
         all_facts = []
-        batch_size = 5  # Process 5 results per API call
+        batch_size = self.batch_size  # Use config value
 
-        # Process in batches
-        for i in range(0, len(results), batch_size):
-            batch = results[i:i + batch_size]
+        # Create batches
+        batches = [results[i:i + batch_size] for i in range(0, len(results), batch_size)]
 
-            try:
-                # Build batch prompt
-                results_text = self._format_results_for_batch(batch)
+        self.logger.info(
+            f"Processing {len(results)} results in {len(batches)} batches "
+            f"(batch_size={batch_size}) with concurrency={self.max_concurrent_llm_calls}"
+        )
 
-                system_prompt = EXTRACTION_SYSTEM_PROMPT.format(target_name=target_name)
-                user_prompt = BATCH_EXTRACTION_PROMPT.format(
-                    num_results=len(batch),
-                    target_name=target_name,
-                    results_text=results_text
-                )
+        # Process batches concurrently with rate limiting
+        try:
+            with ThreadPoolExecutor(max_workers=self.max_concurrent_llm_calls) as executor:
+                future_to_batch = {
+                    executor.submit(
+                        self._extract_single_batch,
+                        batch,
+                        batch_idx + 1,
+                        target_name
+                    ): batch_idx
+                    for batch_idx, batch in enumerate(batches)
+                }
 
-                # Call Gemini Pro
+                for future in as_completed(future_to_batch):
+                    batch_idx = future_to_batch[future]
+                    try:
+                        batch_facts = future.result(timeout=120)
+                        all_facts.extend(batch_facts)
+                        self.logger.info(
+                            f"Batch {batch_idx + 1}/{len(batches)}: Extracted {len(batch_facts)} facts"
+                        )
+                    except Exception as e:
+                        self.logger.error(
+                            f"Batch {batch_idx + 1} failed: {e}",
+                            exc_info=True
+                        )
+                        continue
+
+        except Exception as e:
+            self.logger.error(f"Concurrent batch extraction failed: {e}", exc_info=True)
+            # Fallback to sequential processing
+            self.logger.warning("Falling back to sequential batch processing")
+            for batch_idx, batch in enumerate(batches):
+                try:
+                    batch_facts = self._extract_single_batch(batch, batch_idx + 1, target_name)
+                    all_facts.extend(batch_facts)
+                except Exception as e:
+                    self.logger.error(f"Sequential batch {batch_idx + 1} failed: {e}")
+                    continue
+
+        return all_facts
+
+    def _extract_single_batch(
+        self,
+        batch: List[SearchResult],
+        batch_num: int,
+        target_name: str
+    ) -> List[Dict]:
+        """
+        Extract facts from a single batch with rate limiting.
+
+        Args:
+            batch: List of search results in this batch
+            batch_num: Batch number for logging
+            target_name: Name of the research target
+
+        Returns:
+            List of extracted facts from this batch
+        """
+        batch_facts = []
+
+        try:
+            # Build batch prompt
+            results_text = self._format_results_for_batch(batch)
+
+            system_prompt = EXTRACTION_SYSTEM_PROMPT.format(target_name=target_name)
+            user_prompt = BATCH_EXTRACTION_PROMPT.format(
+                num_results=len(batch),
+                target_name=target_name,
+                results_text=results_text
+            )
+
+            # Use rate limiter to control concurrent API calls
+            with self.rate_limiter.acquire():
                 response = self.client.generate(
                     prompt=user_prompt,
                     system_instruction=system_prompt,
-                    temperature=0.3  # Low temperature for consistency
+                    temperature=self.temperature
                 )
 
-                # Parse JSON response
-                extracted_data = self.client._parse_json_from_markdown(response)
-                batch_facts = extracted_data.get("facts", [])
+            extracted_data = parse_json_object(response)
+            raw_facts = extracted_data.get("facts", [])
 
-                self.logger.info(
-                    f"Batch {i // batch_size + 1}: "
-                    f"Extracted {len(batch_facts)} facts from {len(batch)} results"
-                )
+            # Normalize and enrich facts
+            for fact in raw_facts:
+                # Ensure required fields exist
+                if "content" not in fact:
+                    continue
 
-                # Normalize and enrich facts
-                for fact in batch_facts:
-                    # Ensure required fields exist
-                    if "content" not in fact:
-                        continue
+                # Add metadata
+                fact.setdefault("category", "biographical")
+                fact.setdefault("confidence", 0.5)
+                fact.setdefault("entities", {})
+                fact.setdefault("extracted_date", datetime.now())
 
-                    # Add metadata
-                    fact.setdefault("category", "biographical")
-                    fact.setdefault("confidence", 0.5)
-                    fact.setdefault("entities", {})
-                    fact.setdefault("extracted_date", datetime.utcnow())
+                # Normalize entities
+                fact["entities"] = self._normalize_entities(fact.get("entities", {}))
 
-                    # Normalize entities
-                    fact["entities"] = self._normalize_entities(fact.get("entities", {}))
+                # Adjust preliminary confidence based on source
+                source_domain = fact.get("source_domain", "")
 
-                    # Adjust preliminary confidence based on source
-                    source_url = fact.get("source_url", "")
-                    source_domain = fact.get("source_domain", "")
+                if source_domain:
+                    confidence_boost = self._assign_preliminary_confidence(
+                        fact,
+                        source_domain
+                    )
+                    fact["confidence"] = min(1.0, fact["confidence"] + confidence_boost)
 
-                    if source_domain:
-                        confidence_boost = self._assign_preliminary_confidence(
-                            fact,
-                            source_domain
-                        )
-                        fact["confidence"] = min(1.0, fact["confidence"] + confidence_boost)
+                batch_facts.append(fact)
 
-                    all_facts.append(fact)
+        except Exception as e:
+            self.logger.error(f"Batch {batch_num} extraction failed: {e}", exc_info=True)
 
-            except Exception as e:
-                self.logger.error(f"Batch extraction failed for batch {i // batch_size + 1}: {e}")
-                # Continue with next batch
-                continue
-
-        return all_facts
+        return batch_facts
 
     def _format_results_for_batch(self, results: List[SearchResult]) -> str:
         """
@@ -201,12 +290,12 @@ class ContentExtractorNode:
 
         for idx, result in enumerate(results, 1):
             formatted.append(f"""
---- Result {idx} ---
-Title: {result.title}
-URL: {result.url}
-Domain: {result.source_domain}
-Content: {result.content[:1000]}  # Limit content length
-""")
+                --- Result {idx} ---
+                Title: {result.title}
+                URL: {result.url}
+                Domain: {result.source_domain}
+                Content: {result.content[:1000]}  # Limit content length
+                """)
 
         return "\n".join(formatted)
 
@@ -234,25 +323,24 @@ Content: {result.content[:1000]}  # Limit content length
                 title=result.title,
                 url=result.url,
                 domain=result.source_domain,
-                content=result.content[:2000]  # Limit content
+                content=result.content
             )
 
             # Call Gemini Pro
             response = self.client.generate(
                 prompt=user_prompt,
                 system_instruction=system_prompt,
-                temperature=0.3
+                temperature=self.temperature
             )
 
-            # Parse JSON response
-            extracted_data = self.client._parse_json_from_markdown(response)
+            extracted_data = parse_json_object(response)
             facts = extracted_data.get("facts", [])
 
             # Enrich facts with metadata
             for fact in facts:
                 fact["source_url"] = result.url
                 fact["source_domain"] = result.source_domain
-                fact["extracted_date"] = datetime.utcnow()
+                fact["extracted_date"] = datetime.now()
 
                 # Normalize entities
                 fact["entities"] = self._normalize_entities(fact.get("entities", {}))
@@ -265,19 +353,52 @@ Content: {result.content[:1000]}  # Limit content length
 
     def _categorize_fact(self, fact_content: str) -> str:
         """
-        Categorize fact as biographical, professional, financial, or behavioral.
+        Categorize fact using Gemini Flash model.
 
-        Uses keyword matching as a fallback if LLM doesn't categorize.
+        Falls back to keyword matching if AI fails.
 
         Args:
             fact_content: The fact statement
 
         Returns:
-            Category string
+            Category string (biographical, professional, financial, or behavioral)
         """
+        try:
+            prompt = f"""Categorize this fact into EXACTLY ONE category:
+                    - biographical (birth, family, education, personal life, background)
+                    - professional (career, employment, roles, companies, work achievements)
+                    - financial (money, investments, compensation, assets, revenue, valuation)
+                    - behavioral (actions, decisions, patterns, controversies, legal issues)
+
+                    Fact: "{fact_content}"
+
+                    Return ONLY the category name in lowercase, nothing else. No explanations, no punctuation."""
+
+            response = self.flash_client.generate(
+                prompt=prompt,
+                temperature=self.categorization_temp,
+            )
+
+            category = response.strip().lower()
+
+            # Validate response
+            valid_categories = ["biographical", "professional", "financial", "behavioral"]
+            if category in valid_categories:
+                self.logger.debug(f"AI categorized as '{category}': {fact_content[:50]}...")
+                return category
+            else:
+                self.logger.warning(f"AI returned invalid category '{category}', using fallback")
+
+        except Exception as e:
+            self.logger.warning(f"AI categorization failed: {e}, using keyword fallback")
+
+        # Fallback to keyword matching
+        return self._categorize_fact_keyword_fallback(fact_content)
+
+    def _categorize_fact_keyword_fallback(self, fact_content: str) -> str:
+        """Fallback keyword-based categorization."""
         content_lower = fact_content.lower()
 
-        # Keyword-based categorization
         if any(kw in content_lower for kw in ["born", "birth", "family", "married", "education", "graduated", "degree"]):
             return "biographical"
         elif any(kw in content_lower for kw in ["ceo", "cto", "president", "director", "manager", "founder", "employee", "worked", "career"]):
@@ -287,7 +408,7 @@ Content: {result.content[:1000]}  # Limit content length
         elif any(kw in content_lower for kw in ["statement", "said", "claimed", "alleged", "controversy", "scandal", "lawsuit", "accused"]):
             return "behavioral"
         else:
-            return "biographical"  # Default
+            return "professional"  # Default to professional instead of biographical
 
     def _assign_preliminary_confidence(
         self,
@@ -375,11 +496,13 @@ Content: {result.content[:1000]}  # Limit content length
 
     def _filter_low_quality_facts(self, facts: List[Dict]) -> List[Dict]:
         """
-        Filter out vague, redundant, or low-quality facts.
+        Filter out vague, redundant, or low-quality facts using Gemini Flash AI.
+
+        Falls back to keyword-based filtering if AI fails.
 
         Quality criteria:
         - Fact must have substantive content (> 20 chars)
-        - Confidence must be reasonable (> 0.2)
+        - Confidence must be reasonable (> 0.25)
         - Must not be too vague or generic
         - Must not be duplicate
 
@@ -387,12 +510,152 @@ Content: {result.content[:1000]}  # Limit content length
             facts: List of facts to filter
 
         Returns:
-            Filtered list of facts
+            Filtered list of high-quality facts
         """
+        if not facts:
+            return []
+
+        # Basic pre-filtering (too short, too low confidence)
+        prefiltered = []
+        for fact in facts:
+            content = fact.get("content", "").strip()
+            if len(content) >= 20 and fact.get("confidence", 0) >= 0.25:
+                prefiltered.append(fact)
+
+        if not prefiltered:
+            return []
+
+        # Try AI-powered quality filtering
+        try:
+            return self._filter_facts_with_ai(prefiltered)
+        except Exception as e:
+            self.logger.warning(f"AI quality filtering failed: {e}, using keyword fallback")
+            return self._filter_facts_keyword_fallback(prefiltered)
+
+    def _filter_facts_with_ai(self, facts: List[Dict]) -> List[Dict]:
+        """Use Gemini Flash to evaluate fact quality in batches with concurrent execution."""
+
+        # Process in batches of 10 for efficiency
+        batch_size = 10
+        batches = [facts[i:i + batch_size] for i in range(0, len(facts), batch_size)]
+
+        self.logger.info(
+            f"AI filtering {len(facts)} facts in {len(batches)} batches "
+            f"with concurrency={self.max_concurrent_llm_calls}"
+        )
+
+        all_filtered = []
+
+        # Process batches concurrently with rate limiting
+        try:
+            with ThreadPoolExecutor(max_workers=self.max_concurrent_llm_calls) as executor:
+                future_to_batch = {
+                    executor.submit(
+                        self._filter_single_batch_with_ai,
+                        batch,
+                        batch_idx + 1
+                    ): batch_idx
+                    for batch_idx, batch in enumerate(batches)
+                }
+
+                for future in as_completed(future_to_batch):
+                    batch_idx = future_to_batch[future]
+                    try:
+                        batch_filtered = future.result(timeout=120)
+                        all_filtered.extend(batch_filtered)
+                        self.logger.debug(
+                            f"Filter batch {batch_idx + 1}/{len(batches)}: "
+                            f"Kept {len(batch_filtered)} facts"
+                        )
+                    except Exception as e:
+                        self.logger.error(
+                            f"Filter batch {batch_idx + 1} failed: {e}",
+                            exc_info=True
+                        )
+                        # On failure, keep all facts in this batch to be safe
+                        all_filtered.extend(batches[batch_idx])
+                        continue
+
+        except Exception as e:
+            self.logger.error(f"Concurrent AI filtering failed: {e}", exc_info=True)
+            # Fallback to sequential processing
+            self.logger.warning("Falling back to sequential AI filtering")
+            for batch_idx, batch in enumerate(batches):
+                try:
+                    batch_filtered = self._filter_single_batch_with_ai(batch, batch_idx + 1)
+                    all_filtered.extend(batch_filtered)
+                except Exception as e:
+                    self.logger.error(f"Sequential filter batch {batch_idx + 1} failed: {e}")
+                    # Keep all facts on failure
+                    all_filtered.extend(batch)
+                    continue
+
+        # Deduplicate across all batches
+        seen_content = set()
+        final_filtered = []
+        for fact in all_filtered:
+            content_normalized = fact.get("content", "").lower().strip()
+            if content_normalized not in seen_content:
+                seen_content.add(content_normalized)
+                final_filtered.append(fact)
+
+        self.logger.info(f"AI filtering: {len(facts)} → {len(final_filtered)} facts")
+        return final_filtered
+
+    def _filter_single_batch_with_ai(self, batch: List[Dict], batch_num: int) -> List[Dict]:
+        """Filter a single batch of facts using AI with rate limiting."""
+
+        # Create numbered list for AI
+        facts_text = "\n".join([
+            f"{idx + 1}. {fact['content']}"
+            for idx, fact in enumerate(batch)
+        ])
+
+        prompt = f"""Evaluate each fact for quality. Return indices of facts to KEEP.
+
+                REJECT if fact is:
+                - Vague or generic (e.g., "is well-known", "has experience", "is successful")
+                - Not verifiable or too broad
+                - Redundant with others in the list
+                - Contains only metadata (e.g., "according to sources", "it is reported that")
+
+                KEEP if fact is:
+                - Specific and concrete
+                - Verifiable
+                - Contains unique information
+                - Actionable for due diligence
+
+                Facts to evaluate:
+                {facts_text}
+
+                Return JSON array of indices to KEEP: [1, 3, 5, ...]
+                ONLY return the JSON array, nothing else."""
+
+        # Use rate limiter to control concurrent API calls
+        with self.rate_limiter.acquire():
+            response = self.flash_client.generate(
+                prompt=prompt,
+                temperature=self.categorization_temp,
+            )
+
+        # Parse AI response
+        keep_indices = parse_json_array(response, fallback=[])
+
+        # Filter batch based on AI decisions
+        filtered_batch = []
+        for idx in keep_indices:
+            # Convert 1-indexed to 0-indexed
+            fact_idx = idx - 1
+            if 0 <= fact_idx < len(batch):
+                filtered_batch.append(batch[fact_idx])
+
+        return filtered_batch
+
+    def _filter_facts_keyword_fallback(self, facts: List[Dict]) -> List[Dict]:
+        """Fallback keyword-based quality filtering."""
         filtered = []
         seen_content = set()
 
-        # Vague patterns to reject
         vague_patterns = [
             r"^(he|she|they) (is|are|was|were) (well-known|famous|successful)",
             r"^(the|a|an) (person|individual|man|woman)",
@@ -403,25 +666,15 @@ Content: {result.content[:1000]}  # Limit content length
         for fact in facts:
             content = fact.get("content", "").strip()
 
-            # Skip if too short
-            if len(content) < 20:
-                continue
-
-            # Skip if confidence too low
-            if fact.get("confidence", 0) < 0.25:
-                continue
-
             # Skip if vague
             if any(re.match(pattern, content.lower()) for pattern in vague_patterns):
-                self.logger.debug(f"Filtered vague fact: {content[:50]}...")
                 continue
 
-            # Skip if duplicate (case-insensitive)
+            # Skip if duplicate
             content_normalized = content.lower().strip()
             if content_normalized in seen_content:
                 continue
 
-            # Add to filtered list
             seen_content.add(content_normalized)
             filtered.append(fact)
 

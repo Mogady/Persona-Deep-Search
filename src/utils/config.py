@@ -21,11 +21,11 @@ class AIModelConfig:
     anthropic_api_key: str
 
     # Gemini models (use full default capabilities)
-    gemini_pro_model: str = "gemini-2.0-pro-latest"
-    gemini_flash_model: str = "gemini-2.5-flash-latest"
+    gemini_pro_model: str 
+    gemini_flash_model: str
 
     # Claude models
-    claude_model: str = "claude-sonnet-4-5-20250929"
+    claude_model: str
 
 
 @dataclass
@@ -101,6 +101,24 @@ class PerformanceConfig:
     api_retry_attempts: int = 3
     api_retry_backoff_multiplier: int = 2
 
+    # Query generation limits
+    min_queries_per_iteration: int = 4
+    max_queries_per_iteration: int = 5
+
+    # AI model temperatures
+    query_generation_temperature: float = 0.7
+    fact_extraction_temperature: float = 0.3
+    validation_temperature: float = 0.2
+    categorization_temperature: float = 0.1
+    risk_analysis_temperature: float = 0.3
+    connection_mapping_temperature: float = 0.3
+    report_generation_temperature: float = 0.4
+
+    # AI model max tokens
+    default_max_tokens: int = 4096
+    report_max_tokens: int = 8192
+    structured_output_max_tokens: int = 4096
+
 
 @dataclass
 class ChainlitConfig:
@@ -164,82 +182,97 @@ class Config:
 
         # AI Models Configuration (Multi-model: Claude + Gemini)
         ai_models = AIModelConfig(
-            google_api_key=os.getenv("GOOGLE_API_KEY", ""),
-            anthropic_api_key=os.getenv("ANTHROPIC_API_KEY", ""),
-            gemini_pro_model=os.getenv("GEMINI_PRO_MODEL", "gemini-2.5-pro"),
-            gemini_flash_model=os.getenv("GEMINI_FLASH_MODEL", "gemini-2.5-flash"),
-            claude_model=os.getenv("CLAUDE_MODEL", "claude-sonnet-4-5-20250929"),
+            google_api_key=os.getenv("GOOGLE_API_KEY"),
+            anthropic_api_key=os.getenv("ANTHROPIC_API_KEY"),
+            gemini_pro_model=os.getenv("GEMINI_PRO_MODEL"),
+            gemini_flash_model=os.getenv("GEMINI_FLASH_MODEL"),
+            claude_model=os.getenv("CLAUDE_MODEL"),
         )
 
         # Search Configuration
         search = SearchConfig(
-            serpapi_key=os.getenv("SERPAPI_KEY", ""),
+            serpapi_key=os.getenv("SERPAPI_KEY"),
             brave_api_key=os.getenv("BRAVE_API_KEY"),
             firecrawl_api_key=os.getenv("FIRECRAWL_API_KEY"),
-            search_type=os.getenv("SEARCH_TYPE", "web"),
-            max_results_per_query=int(os.getenv("MAX_SEARCH_RESULTS_PER_QUERY", "10")),
-            max_concurrent_searches=int(os.getenv("MAX_CONCURRENT_SEARCH_CALLS", "10")),
+            search_type=os.getenv("SEARCH_TYPE"),
+            max_results_per_query=int(os.getenv("MAX_SEARCH_RESULTS_PER_QUERY")),
+            max_concurrent_searches=int(os.getenv("MAX_CONCURRENT_SEARCH_CALLS")),
         )
 
         # Database Configuration
         database = DatabaseConfig(
-            database_url=os.getenv("DATABASE_URL", "sqlite:///research_agent.db"),
+            database_url=os.getenv("DATABASE_URL"),
             db_user=os.getenv("DB_USER"),
             db_password=os.getenv("DB_PASSWORD"),
             db_name=os.getenv("DB_NAME"),
             db_host=os.getenv("DB_HOST"),
-            db_port=int(os.getenv("DB_PORT", "5432")),
+            db_port=int(os.getenv("DB_PORT")),
             cloud_sql_connection_name=os.getenv("CLOUD_SQL_CONNECTION_NAME"),
         )
 
         # Application Configuration
         application = ApplicationConfig(
-            max_search_iterations=int(os.getenv("MAX_SEARCH_ITERATIONS", "7")),
-            max_facts_per_session=int(os.getenv("MAX_FACTS_PER_SESSION", "100")),
-            research_timeout_minutes=int(os.getenv("RESEARCH_TIMEOUT_MINUTES", "15")),
-            log_level=os.getenv("LOG_LEVEL", "INFO"),
-            debug_mode=os.getenv("DEBUG_MODE", "false").lower() == "true",
-            environment=os.getenv("ENVIRONMENT", "development"),
-            test_mode=os.getenv("TEST_MODE", "false").lower() == "true",
-            mock_api_calls=os.getenv("MOCK_API_CALLS", "false").lower() == "true",
+            max_search_iterations=int(os.getenv("MAX_SEARCH_ITERATIONS")),
+            max_facts_per_session=int(os.getenv("MAX_FACTS_PER_SESSION")),
+            research_timeout_minutes=int(os.getenv("RESEARCH_TIMEOUT_MINUTES")),
+            log_level=os.getenv("LOG_LEVEL"),
+            debug_mode=os.getenv("DEBUG_MODE").lower() == "true",
+            environment=os.getenv("ENVIRONMENT"),
+            test_mode=os.getenv("TEST_MODE").lower() == "true",
+            mock_api_calls=os.getenv("MOCK_API_CALLS").lower() == "true",
         )
 
         # GCP Configuration
         gcp = GCPConfig(
             project_id=os.getenv("GCP_PROJECT_ID"),
-            region=os.getenv("GCP_REGION", "us-central1"),
-            use_secret_manager=os.getenv("USE_SECRET_MANAGER", "false").lower() == "true",
+            region=os.getenv("GCP_REGION"),
+            use_secret_manager=os.getenv("USE_SECRET_MANAGER").lower() == "true",
             secret_manager_project=os.getenv("SECRET_MANAGER_PROJECT"),
             storage_bucket=os.getenv("GCP_STORAGE_BUCKET"),
-            enable_gcs_storage=os.getenv("ENABLE_GCS_STORAGE", "false").lower() == "true",
+            enable_gcs_storage=os.getenv("ENABLE_GCS_STORAGE").lower() == "true",
         )
 
         # Logging Configuration
         logging_config = LoggingConfig(
-            log_file_path=os.getenv("LOG_FILE_PATH", "logs/research.log"),
-            structured_logging=os.getenv("STRUCTURED_LOGGING", "true").lower() == "true",
-            log_max_bytes=int(os.getenv("LOG_MAX_BYTES", "10485760")),
-            log_backup_count=int(os.getenv("LOG_BACKUP_COUNT", "5")),
-            enable_audit_log=os.getenv("ENABLE_AUDIT_LOG", "true").lower() == "true",
-            audit_log_path=os.getenv("AUDIT_LOG_PATH", "logs/audit.log"),
-            anonymize_logs=os.getenv("ANONYMIZE_LOGS", "true").lower() == "true",
+            log_file_path=os.getenv("LOG_FILE_PATH"),
+            structured_logging=os.getenv("STRUCTURED_LOGGING").lower() == "true",
+            log_max_bytes=int(os.getenv("LOG_MAX_BYTES")),
+            log_backup_count=int(os.getenv("LOG_BACKUP_COUNT")),
+            enable_audit_log=os.getenv("ENABLE_AUDIT_LOG").lower() == "true",
+            audit_log_path=os.getenv("AUDIT_LOG_PATH"),
+            anonymize_logs=os.getenv("ANONYMIZE_LOGS").lower() == "true",
         )
 
         # Performance Configuration
         performance = PerformanceConfig(
-            extraction_batch_size=int(os.getenv("EXTRACTION_BATCH_SIZE", "10")),
-            max_concurrent_llm_calls=int(os.getenv("MAX_CONCURRENT_LLM_CALLS", "10")),
-            max_concurrent_search_calls=int(os.getenv("MAX_CONCURRENT_SEARCH_CALLS", "10")),
-            api_request_timeout=int(os.getenv("API_REQUEST_TIMEOUT", "30")),
-            api_retry_attempts=int(os.getenv("API_RETRY_ATTEMPTS", "3")),
-            api_retry_backoff_multiplier=int(os.getenv("API_RETRY_BACKOFF_MULTIPLIER", "2")),
+            extraction_batch_size=int(os.getenv("EXTRACTION_BATCH_SIZE")),
+            max_concurrent_llm_calls=int(os.getenv("MAX_CONCURRENT_LLM_CALLS")),
+            max_concurrent_search_calls=int(os.getenv("MAX_CONCURRENT_SEARCH_CALLS")),
+            api_request_timeout=int(os.getenv("API_REQUEST_TIMEOUT")),
+            api_retry_attempts=int(os.getenv("API_RETRY_ATTEMPTS")),
+            api_retry_backoff_multiplier=int(os.getenv("API_RETRY_BACKOFF_MULTIPLIER")),
+            # Query generation limits
+            min_queries_per_iteration=int(os.getenv("MIN_QUERIES_PER_ITERATION", "3")),
+            max_queries_per_iteration=int(os.getenv("MAX_QUERIES_PER_ITERATION", "5")),
+            # AI model temperatures
+            query_generation_temperature=float(os.getenv("QUERY_GENERATION_TEMPERATURE", "0.7")),
+            fact_extraction_temperature=float(os.getenv("FACT_EXTRACTION_TEMPERATURE", "0.3")),
+            validation_temperature=float(os.getenv("VALIDATION_TEMPERATURE", "0.2")),
+            categorization_temperature=float(os.getenv("CATEGORIZATION_TEMPERATURE", "0.1")),
+            risk_analysis_temperature=float(os.getenv("RISK_ANALYSIS_TEMPERATURE", "0.3")),
+            connection_mapping_temperature=float(os.getenv("CONNECTION_MAPPING_TEMPERATURE", "0.3")),
+            report_generation_temperature=float(os.getenv("REPORT_GENERATION_TEMPERATURE", "0.4")),
+            # AI model max tokens
+            default_max_tokens=int(os.getenv("DEFAULT_MAX_TOKENS", "4096")),
+            report_max_tokens=int(os.getenv("REPORT_MAX_TOKENS", "8192")),
+            structured_output_max_tokens=int(os.getenv("STRUCTURED_OUTPUT_MAX_TOKENS", "4096")),
         )
 
         # Chainlit Configuration
         chainlit = ChainlitConfig(
-            host=os.getenv("CHAINLIT_HOST", "0.0.0.0"),
-            port=int(os.getenv("CHAINLIT_PORT", "8000")),
-            debug=os.getenv("CHAINLIT_DEBUG", "false").lower() == "true",
+            host=os.getenv("CHAINLIT_HOST"),
+            port=int(os.getenv("CHAINLIT_PORT")),
+            debug=os.getenv("CHAINLIT_DEBUG").lower() == "true",
         )
 
         logger.info("Configuration loaded successfully")

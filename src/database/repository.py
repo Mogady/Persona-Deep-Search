@@ -279,6 +279,72 @@ class ResearchRepository:
             logger.error(f"Failed to save final report: {e}")
             return False
 
+    def update_session_checkpoint(
+        self,
+        session_id: str,
+        node_name: str,
+        state: Dict[str, Any]
+    ) -> bool:
+        """
+        Save a checkpoint after a node execution.
+
+        Args:
+            session_id: Session identifier
+            node_name: Name of the node that just completed
+            state: Current workflow state
+
+        Returns:
+            bool: True if checkpoint saved successfully
+        """
+        try:
+            with self.get_session() as session:
+                research_session = session.query(ResearchSession).filter_by(
+                    session_id=session_id
+                ).first()
+
+                if not research_session:
+                    logger.warning(f"Session not found for checkpoint: {session_id}")
+                    return False
+
+                # Update status to in_progress if not already
+                if research_session.status == SessionStatus.PENDING:
+                    research_session.status = SessionStatus.IN_PROGRESS
+                    research_session.started_at = datetime.now()
+
+                research_session.updated_at = datetime.now()
+
+                logger.debug(f"Checkpoint saved for session {session_id} after {node_name}")
+                return True
+
+        except SQLAlchemyError as e:
+            logger.error(f"Failed to save checkpoint: {e}")
+            return False
+
+    def complete_session(self, session_id: str) -> bool:
+        """
+        Mark a research session as completed.
+
+        Args:
+            session_id: Session identifier
+
+        Returns:
+            bool: True if session marked as completed
+        """
+        return self.update_session_status(session_id, SessionStatus.COMPLETED)
+
+    def fail_session(self, session_id: str, error_message: str) -> bool:
+        """
+        Mark a research session as failed with error message.
+
+        Args:
+            session_id: Session identifier
+            error_message: Error description
+
+        Returns:
+            bool: True if session marked as failed
+        """
+        return self.update_session_status(session_id, SessionStatus.FAILED, error_message)
+
     # ==================== Fact Operations ====================
 
     def save_fact(
@@ -441,6 +507,38 @@ class ResearchRepository:
             logger.error(f"Failed to save connection: {e}")
             return None
 
+    def save_connections_batch(self, connections: List[Dict[str, Any]]) -> int:
+        """
+        Save multiple connections in a batch operation.
+
+        Args:
+            connections: List of connection dictionaries with required fields
+
+        Returns:
+            int: Number of connections saved successfully
+        """
+        try:
+            with self.get_session() as session:
+                connection_objects = [
+                    Connection(
+                        session_id=c["session_id"],
+                        entity_a=c["entity_a"],
+                        entity_b=c["entity_b"],
+                        relationship_type=c["relationship_type"],
+                        evidence=c["evidence"],
+                        confidence_score=c["confidence"],
+                    )
+                    for c in connections
+                ]
+                session.bulk_save_objects(connection_objects)
+
+                logger.info(f"Batch saved {len(connections)} connections")
+                return len(connections)
+
+        except SQLAlchemyError as e:
+            logger.error(f"Failed to batch save connections: {e}")
+            return 0
+
     def get_connections_by_session(self, session_id: str) -> List[Connection]:
         """
         Get all connections for a session.
@@ -509,6 +607,39 @@ class ResearchRepository:
         except SQLAlchemyError as e:
             logger.error(f"Failed to save risk flag: {e}")
             return None
+
+    def save_risk_flags_batch(self, risks: List[Dict[str, Any]]) -> int:
+        """
+        Save multiple risk flags in a batch operation.
+
+        Args:
+            risks: List of risk dictionaries with required fields
+
+        Returns:
+            int: Number of risk flags saved successfully
+        """
+        try:
+            with self.get_session() as session:
+                risk_objects = [
+                    RiskFlag(
+                        session_id=r["session_id"],
+                        severity=r["severity"],
+                        category=r["category"],
+                        description=r["description"],
+                        evidence=r["evidence"],
+                        confidence_score=r["confidence"],
+                        mitigation_notes=r.get("recommended_follow_up"),
+                    )
+                    for r in risks
+                ]
+                session.bulk_save_objects(risk_objects)
+
+                logger.info(f"Batch saved {len(risks)} risk flags")
+                return len(risks)
+
+        except SQLAlchemyError as e:
+            logger.error(f"Failed to batch save risk flags: {e}")
+            return 0
 
     def get_risks_by_session(
         self,

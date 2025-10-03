@@ -54,12 +54,18 @@ class SearchOrchestrator:
         use_fallback: bool = True
     ) -> List[SearchResult]:
         """
-        Execute search with optional fallback.
+        Execute search with automatic fallback.
+
+        Strategy:
+        1. Primary: Try SerpApi (Google Search)
+        2. Supplement: If SerpApi returns < 3 results, supplement with Brave
+        3. Fallback: If SerpApi fails completely, use Brave as fallback
+        4. Fail: If both fail, return empty list (graceful degradation)
 
         Args:
             query: Search query
             max_results: Maximum results to return
-            use_fallback: Whether to use Brave as fallback if SerpApi returns few results
+            use_fallback: Whether to use Brave as fallback
 
         Returns:
             List[SearchResult]: Combined and deduplicated results
@@ -72,40 +78,53 @@ class SearchOrchestrator:
 
             # If we got enough quality results, return them
             if len(results) >= 3 or not use_fallback or not self.brave_search:
-                self.logger.info(f"Returning {len(results)} results from SerpApi")
+                self.logger.info(f"SerpApi returned {len(results)} results")
                 return results
 
-            # 2. Supplement with Brave Search if available
+            # 2. Supplement with Brave Search if we have few results
             self.logger.info(
                 f"Only {len(results)} results from SerpApi, "
                 f"supplementing with Brave Search"
             )
 
-            brave_results = self.brave_search.search(
-                query,
-                max_results=max_results - len(results)
-            )
+            try:
+                brave_results = self.brave_search.search(
+                    query,
+                    max_results=max_results - len(results)
+                )
 
-            # Combine and deduplicate
-            combined = results + brave_results
-            deduplicated = self.serp_search._deduplicate_results(combined)
+                # Combine and deduplicate
+                combined = results + brave_results
+                deduplicated = self.serp_search._deduplicate_results(combined)
 
-            self.logger.info(
-                f"Returning {len(deduplicated)} combined results "
-                f"({len(results)} SerpApi + {len(brave_results)} Brave)"
-            )
+                self.logger.info(
+                    f"Returning {len(deduplicated)} combined results "
+                    f"({len(results)} SerpApi + {len(brave_results)} Brave)"
+                )
 
-            return deduplicated
+                return deduplicated
+
+            except Exception as brave_error:
+                self.logger.warning(f"Brave Search supplementation failed: {brave_error}")
+                # Return SerpApi results even if supplementation failed
+                return results
 
         except Exception as e:
-            self.logger.error(f"Search failed: {e}")
+            self.logger.error(f"SerpApi failed: {e}", exc_info=True)
 
-            # Fallback to Brave if SerpApi fails completely
+            # 3. Fallback to Brave if SerpApi fails completely
             if self.brave_search and use_fallback:
-                self.logger.warning("SerpApi failed, falling back to Brave Search")
-                return self.brave_search.search(query, max_results=max_results)
+                try:
+                    self.logger.warning("SerpApi failed completely, falling back to Brave Search")
+                    brave_results = self.brave_search.search(query, max_results=max_results)
+                    self.logger.info(f"Brave Search fallback returned {len(brave_results)} results")
+                    return brave_results
+                except Exception as brave_error:
+                    self.logger.error(f"Brave Search fallback also failed: {brave_error}", exc_info=True)
 
-            raise
+            # 4. Both failed - return empty list (graceful degradation)
+            self.logger.error(f"All search providers failed for query: '{query}'")
+            return []
 
     def batch_search(self, queries: List[str], max_results: int = 10) -> List[SearchResult]:
         """

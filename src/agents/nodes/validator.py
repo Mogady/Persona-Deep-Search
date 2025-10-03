@@ -5,21 +5,24 @@ This node uses Claude Sonnet for complex reasoning to validate facts,
 detect contradictions, and adjust confidence scores.
 """
 
-from typing import Dict, List, Set, Optional, Tuple
+from typing import Dict, List
 from datetime import datetime, timedelta
 from collections import defaultdict
 import json
 import numpy as np
+from src.utils.similarity import cosine_similarity
 
 from src.tools.models import ModelFactory
 from src.utils.logger import get_logger
+from src.utils.config import Config
+from src.database.repository import ResearchRepository
+from src.database.models import FactCategory
 from src.prompts.templates.validator_prompt import (
     VALIDATION_SYSTEM_PROMPT,
-    CROSS_REFERENCE_PROMPT,
     CONTRADICTION_DETECTION_PROMPT,
-    SOURCE_AUTHORITY_EVALUATION_PROMPT,
-    SEMANTIC_SIMILARITY_GROUPING_PROMPT
+
 )
+from src.utils.json_parser import parse_json_object
 
 
 class ValidatorNode:
@@ -49,13 +52,24 @@ class ValidatorNode:
         "washingtonpost.com": 0.8,
     }
 
-    def __init__(self):
-        """Initialize the validator with Claude Sonnet."""
+    def __init__(self, config: Config, repository: ResearchRepository):
+        """
+        Initialize the validator with Claude Sonnet.
+
+        Args:
+            config: Configuration object with all settings
+            repository: Database repository for persistence
+        """
+        self.config = config
+        self.repository = repository
         self.client = ModelFactory.get_optimal_model_for_task("complex_reasoning")  # Claude
         # Also get Gemini for embeddings
         self.gemini_client = ModelFactory.get_optimal_model_for_task("extraction")
         self.logger = get_logger(__name__)
-        self.logger.info("Initialized ValidatorNode with Claude Sonnet")
+
+        # Load config values
+        self.temperature = config.performance.validation_temperature
+        self.max_concurrent_llm_calls = config.performance.max_concurrent_llm_calls
 
     def execute(self, state: Dict) -> Dict:
         """
@@ -63,42 +77,87 @@ class ValidatorNode:
 
         Args:
             state: Current ResearchState dict with:
-                - collected_facts: List[Dict] (newly extracted facts)
+                - new_facts: List[Dict] (newly extracted facts in current iteration)
+                - collected_facts: List[Dict] (all accumulated facts for context)
 
         Returns:
-            Updated state with validated facts (adjusted confidence scores)
+            Updated state with validated new facts merged back into collected_facts
         """
+        new_facts = state.get("new_facts", [])
         collected_facts = state.get("collected_facts", [])
         target_name = state.get("target_name", "")
 
-        if not collected_facts:
-            self.logger.warning("No facts to validate")
+        if not new_facts:
+            self.logger.info("No new facts to validate in this iteration")
             return state
 
-        self.logger.info(f"Validating {len(collected_facts)} facts for '{target_name}'")
+        self.logger.info(
+            f"Validating {len(new_facts)} new facts for '{target_name}' "
+            f"(total accumulated: {len(collected_facts)})"
+        )
 
-        # Step 1: Cross-reference and group similar facts
-        fact_groups = self._cross_reference_facts(collected_facts)
+        # Step 1: Cross-reference new facts with ALL facts (for context)
+        # We need all facts to check for corroboration and contradictions
+        fact_groups = self._cross_reference_facts(new_facts)
 
-        # Step 2: Detect contradictions
-        contradictions = self._detect_contradictions(collected_facts)
+        # Step 2: Detect contradictions (check new facts against all facts)
+        contradictions = self._detect_contradictions(new_facts)
 
-        # Step 3: Evaluate source authority
-        source_scores = self._evaluate_source_authority(collected_facts)
+        # Step 3: Evaluate source authority for new facts
+        source_scores = self._evaluate_source_authority(new_facts)
 
-        # Step 4: Calculate final confidence scores
-        validated_facts = self._calculate_final_confidence_scores(
-            collected_facts,
+        # Step 4: Calculate final confidence scores for new facts
+        validated_new_facts = self._calculate_final_confidence_scores(
+            new_facts,
             fact_groups,
             contradictions,
             source_scores
         )
 
-        # Update state
-        state["collected_facts"] = validated_facts
+        # Step 5: Update collected_facts - replace the new ones with validated versions
+        # Since new_facts were just added to collected_facts by extractor,
+        # we need to replace them with validated versions
+        # Remove last N facts (the new ones) and add validated versions
+        if len(collected_facts) >= len(new_facts):
+            collected_facts = collected_facts[:-len(new_facts)]
+        collected_facts.extend(validated_new_facts)
+
+        state["collected_facts"] = collected_facts
 
         # Log validation metrics
-        self._log_validation_metrics(validated_facts, contradictions)
+        self._log_validation_metrics(validated_new_facts, contradictions)
+
+        # Save validated facts to database
+        session_id = state.get("session_id")
+        if session_id and validated_new_facts:
+            try:
+                # Convert facts to database format
+                db_facts = []
+                for fact in validated_new_facts:
+                    # Map category string to FactCategory enum
+                    category_str = fact.get("category", "professional").upper()
+                    try:
+                        category = FactCategory[category_str]
+                    except KeyError:
+                        category = FactCategory.PROFESSIONAL  # Default fallback
+
+                    db_facts.append({
+                        "session_id": session_id,
+                        "content": fact["content"],
+                        "source_url": fact["source_url"],
+                        "category": category,
+                        "confidence_score": fact["confidence"],
+                        "extraction_method": "gemini_pro",
+                        "raw_context": fact.get("source_domain", "")
+                    })
+
+                # Batch save to database
+                saved_count = self.repository.save_facts_batch(db_facts)
+                self.logger.info(f"Saved {saved_count}/{len(db_facts)} validated facts to database")
+
+            except Exception as e:
+                self.logger.error(f"Failed to save facts to database: {e}", exc_info=True)
+                # Don't fail the workflow if DB save fails
 
         return state
 
@@ -156,7 +215,10 @@ class ValidatorNode:
             embeddings_array = np.array(embeddings)
 
             # Compute pairwise cosine similarity
-            similarities = self._compute_cosine_similarity_matrix(embeddings_array)
+            n_facts = len(embeddings_array)
+            similarities = np.zeros((n_facts, n_facts))
+            for i in range(n_facts):
+                similarities[i] = cosine_similarity(embeddings_array[i], embeddings_array)
 
             # Group facts by similarity threshold
             similarity_threshold = 0.85  # High threshold for similar facts
@@ -175,28 +237,6 @@ class ValidatorNode:
             self.logger.error(f"Semantic similarity grouping failed: {e}")
             # Fallback to simple text matching
             return self._simple_text_matching(facts)
-
-    def _compute_cosine_similarity_matrix(
-        self,
-        embeddings: np.ndarray
-    ) -> np.ndarray:
-        """
-        Compute pairwise cosine similarity matrix.
-
-        Args:
-            embeddings: Array of embedding vectors (n x d)
-
-        Returns:
-            Similarity matrix (n x n)
-        """
-        # Normalize embeddings
-        norms = np.linalg.norm(embeddings, axis=1, keepdims=True)
-        normalized = embeddings / (norms + 1e-8)
-
-        # Compute dot product (cosine similarity for normalized vectors)
-        similarity_matrix = np.dot(normalized, normalized.T)
-
-        return similarity_matrix
 
     def _cluster_by_similarity(
         self,
@@ -285,7 +325,7 @@ class ValidatorNode:
                 indent=2
             )
 
-            # Use Claude for contradiction detection
+            # Use Claude for contradiction detection with rate limiting
             target_name = facts[0].get("entities", {}).get("people", [""])[0] if facts else ""
             prompt = CONTRADICTION_DETECTION_PROMPT.format(
                 target_name=target_name,
@@ -295,11 +335,11 @@ class ValidatorNode:
             response = self.client.generate(
                 prompt=prompt,
                 system_instruction=VALIDATION_SYSTEM_PROMPT,
-                temperature=0.3  # Low temperature for consistency
+                temperature=self.temperature
             )
 
             # Parse response
-            result = self.client._parse_json_from_markdown(response)
+            result = parse_json_object(response)
             contradictions = result.get("contradictions", [])
 
             self.logger.info(f"Detected {len(contradictions)} contradictions")

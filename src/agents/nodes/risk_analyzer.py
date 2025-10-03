@@ -1,12 +1,15 @@
-from typing import Dict, List, Optional, Set
+from typing import Dict, List, Optional
 from datetime import datetime
 from collections import defaultdict
 from src.tools.models import ModelFactory
 from src.utils.logger import get_logger
+from src.utils.config import Config
+from src.database.repository import ResearchRepository
+from src.utils.json_parser import parse_json_array
 from src.prompts.templates.risk_analyzer_prompt import RISK_ANALYSIS_PROMPT
 import json
-import re
 import numpy as np
+from src.utils.similarity import cosine_similarity
 
 class RiskAnalyzerNode:
     """
@@ -20,39 +23,64 @@ class RiskAnalyzerNode:
     # Valid risk categories
     VALID_CATEGORIES = {"Legal", "Financial", "Reputational", "Compliance", "Behavioral"}
 
-    def __init__(self):
+    def __init__(self, config: Config, repository: ResearchRepository):
+        """
+        Initialize the risk analyzer with Claude Sonnet.
+
+        Args:
+            config: Configuration object with all settings
+            repository: Database repository for persistence
+        """
+        self.config = config
+        self.repository = repository
         self.client = ModelFactory.get_optimal_model_for_task("risk_analysis") # Claude Sonnet
         self.logger = get_logger(__name__)
 
         # Get Gemini client for embeddings (for semantic deduplication)
         self.gemini_client = ModelFactory.get_optimal_model_for_task("extraction")
 
+        # Load config values
+        self.temperature = config.performance.risk_analysis_temperature
+        self.max_concurrent_llm_calls = config.performance.max_concurrent_llm_calls
+
     def execute(self, state: Dict) -> Dict:
         """
-        Analyzes facts for risks and adds them to the state.
+        Analyzes NEW facts for risks and adds them to the state.
 
         Args:
-            state: Current ResearchState with 'collected_facts'.
+            state: Current ResearchState with:
+                - new_facts: List[Dict] (newly extracted facts in current iteration)
+                - collected_facts: List[Dict] (all accumulated facts for context)
 
         Returns:
-            Updated state with 'risk_flags' populated.
+            Updated state with new 'risk_flags' appended.
         """
         self.logger.info("Executing Risk Analyzer Node")
 
-        facts = state.get('collected_facts', [])
-        if not facts:
-            self.logger.info("No facts to analyze for risks.")
+        new_facts = state.get('new_facts', [])
+        collected_facts = state.get('collected_facts', [])
+
+        if not new_facts:
+            self.logger.info("No new facts to analyze for risks in this iteration.")
             if 'risk_flags' not in state:
                 state['risk_flags'] = []
             return state
 
-        prompt = RISK_ANALYSIS_PROMPT.format(facts=json.dumps(facts, indent=2))
+        self.logger.info(
+            f"Analyzing {len(new_facts)} new facts for risks "
+            f"(total accumulated: {len(collected_facts)})"
+        )
+
+        # Serialize new facts with datetime handling
+        facts_serializable = self._make_facts_serializable(new_facts)
+        prompt = RISK_ANALYSIS_PROMPT.format(facts=json.dumps(facts_serializable, indent=2))
 
         try:
+
             response = self.client.generate(prompt)
 
             # Parse JSON with markdown extraction
-            risks = self._parse_json_from_markdown(response)
+            risks = parse_json_array(response)
 
             if not risks:
                 self.logger.warning("No risks found in LLM response.")
@@ -63,14 +91,14 @@ class RiskAnalyzerNode:
             # Validate and clean risks
             valid_risks = []
             for risk in risks:
-                validated_risk = self._validate_risk_structure(risk, facts)
+                validated_risk = self._validate_risk_structure(risk, new_facts)
                 if validated_risk:
                     valid_risks.append(validated_risk)
 
             self.logger.info(f"Validated {len(valid_risks)} out of {len(risks)} risks.")
 
             # Calibrate confidence based on evidence
-            calibrated_risks = [self._calibrate_confidence(risk, facts) for risk in valid_risks]
+            calibrated_risks = [self._calibrate_confidence(risk, new_facts) for risk in valid_risks]
 
             # Deduplicate risks
             unique_risks = self._deduplicate_risks(calibrated_risks)
@@ -89,6 +117,31 @@ class RiskAnalyzerNode:
 
             self.logger.info(f"Added {len(final_risks)} unique risks (deduplicated from {len(valid_risks)}).")
 
+            # Save risk flags to database
+            session_id = state.get("session_id")
+            if session_id and final_risks:
+                try:
+                    # Convert risk flags to database format
+                    db_risks = []
+                    for risk in final_risks:
+                        db_risks.append({
+                            "session_id": session_id,
+                            "severity": risk["severity"],
+                            "category": risk["category"],
+                            "description": risk["description"],
+                            "evidence": risk["evidence"],
+                            "confidence": risk["confidence"],
+                            "recommended_follow_up": risk.get("recommended_follow_up", "")
+                        })
+
+                    # Batch save to database
+                    saved_count = self.repository.save_risk_flags_batch(db_risks)
+                    self.logger.info(f"Saved {saved_count}/{len(db_risks)} risk flags to database")
+
+                except Exception as e:
+                    self.logger.error(f"Failed to save risk flags to database: {e}", exc_info=True)
+                    # Don't fail the workflow if DB save fails
+
         except json.JSONDecodeError as e:
             self.logger.error(f"Failed to parse JSON from risk analysis response: {e}")
             if 'risk_flags' not in state:
@@ -99,49 +152,6 @@ class RiskAnalyzerNode:
                 state['risk_flags'] = []
 
         return state
-
-    def _parse_json_from_markdown(self, response: str) -> List[Dict]:
-        """
-        Parse JSON from LLM response, handling markdown code blocks.
-
-        Args:
-            response: Raw LLM response text
-
-        Returns:
-            List of risk dictionaries
-        """
-        if not response or not response.strip():
-            self.logger.warning("Empty response from LLM.")
-            return []
-
-        # Try to extract JSON from markdown code blocks
-        json_pattern = r'```(?:json)?\s*(\[.*?\])\s*```'
-        match = re.search(json_pattern, response, re.DOTALL)
-
-        if match:
-            json_str = match.group(1)
-            try:
-                return json.loads(json_str)
-            except json.JSONDecodeError:
-                self.logger.warning("Failed to parse JSON from markdown block.")
-
-        # Try to parse the entire response as JSON
-        try:
-            return json.loads(response)
-        except json.JSONDecodeError:
-            pass
-
-        # Try to find JSON array in the response
-        array_pattern = r'\[.*?\]'
-        match = re.search(array_pattern, response, re.DOTALL)
-        if match:
-            try:
-                return json.loads(match.group(0))
-            except json.JSONDecodeError:
-                pass
-
-        self.logger.error("Could not extract valid JSON from response.")
-        return []
 
     def _validate_risk_structure(self, risk: Dict, facts: List[Dict]) -> Optional[Dict]:
         """
@@ -162,15 +172,19 @@ class RiskAnalyzerNode:
                 self.logger.warning(f"Risk missing required field '{field}': {risk}")
                 return None
 
-        # Validate severity
+        # Validate and normalize severity (convert to lowercase for database enum)
         if risk['severity'] not in self.VALID_SEVERITIES:
             self.logger.warning(f"Invalid severity '{risk['severity']}'. Defaulting to 'Medium'.")
             risk['severity'] = 'Medium'
+        # Normalize to lowercase for database compatibility
+        risk['severity'] = risk['severity'].lower()
 
-        # Validate category
+        # Validate and normalize category (convert to lowercase for database enum)
         if risk['category'] not in self.VALID_CATEGORIES:
             self.logger.warning(f"Invalid category '{risk['category']}'. Defaulting to 'Reputational'.")
             risk['category'] = 'Reputational'
+        # Normalize to lowercase for database compatibility
+        risk['category'] = risk['category'].lower()
 
         # Validate confidence
         try:
@@ -298,7 +312,11 @@ class RiskAnalyzerNode:
 
             if embeddings and len(embeddings) == len(risks):
                 # Calculate cosine similarity matrix
-                similarity_matrix = self._cosine_similarity_matrix(embeddings)
+                n_risks = len(embeddings)
+                similarity_matrix = np.zeros((n_risks, n_risks))
+                embeddings_array = np.array(embeddings)
+                for i in range(n_risks):
+                    similarity_matrix[i] = cosine_similarity(embeddings_array[i], embeddings_array)
 
                 # Group similar risks (threshold: 0.85)
                 groups = self._group_by_similarity(similarity_matrix, threshold=0.85)
@@ -345,19 +363,6 @@ class RiskAnalyzerNode:
                 self.logger.debug(f"Removed duplicate risk: {risk['description'][:50]}...")
 
         return unique_risks
-
-    def _cosine_similarity_matrix(self, embeddings: List[List[float]]) -> np.ndarray:
-        """Calculate cosine similarity matrix for embeddings."""
-        embeddings_array = np.array(embeddings)
-
-        # Normalize embeddings
-        norms = np.linalg.norm(embeddings_array, axis=1, keepdims=True)
-        normalized = embeddings_array / (norms + 1e-10)
-
-        # Compute cosine similarity
-        similarity = np.dot(normalized, normalized.T)
-
-        return similarity
 
     def _group_by_similarity(self, similarity_matrix: np.ndarray, threshold: float = 0.85) -> List[List[int]]:
         """Group indices by similarity threshold."""
@@ -484,3 +489,23 @@ class RiskAnalyzerNode:
         self.logger.info(f"Average Confidence: {avg_confidence:.2f}")
         self.logger.info(f"Average Evidence per Risk: {avg_evidence:.1f}")
         self.logger.info(f"Total Evidence Items: {total_evidence}")
+
+    def _make_facts_serializable(self, facts: List[Dict]) -> List[Dict]:
+        """
+        Convert facts to JSON-serializable format by handling datetime objects.
+
+        Args:
+            facts: List of fact dictionaries
+
+        Returns:
+            List of facts with datetime objects converted to ISO strings
+        """
+        serializable_facts = []
+        for fact in facts:
+            fact_copy = fact.copy()
+            # Convert datetime objects to ISO strings
+            for key, value in fact_copy.items():
+                if isinstance(value, datetime):
+                    fact_copy[key] = value.isoformat()
+            serializable_facts.append(fact_copy)
+        return serializable_facts

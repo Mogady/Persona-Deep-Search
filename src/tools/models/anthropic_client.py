@@ -12,6 +12,8 @@ from tenacity import retry, stop_after_attempt, wait_exponential
 import anthropic
 
 from src.utils.logger import get_logger
+from src.utils.json_parser import parse_json_object
+from src.utils.config import get_config
 
 
 class AnthropicClient:
@@ -25,27 +27,28 @@ class AnthropicClient:
     - Strategic reasoning
     """
 
-    def __init__(self, api_key: str, model_name: str, max_retries: int = 3):
+    def __init__(self, api_key: str, model_name: str, max_retries: int = None):
         """
         Initialize the Anthropic Claude client.
 
         Args:
             api_key: Anthropic API key for authentication
             model_name: Name of the Claude model to use (e.g., claude-sonnet-4-5-20250929)
-            max_retries: Maximum number of retry attempts (default: 3)
+            max_retries: Maximum number of retry attempts (default: from config)
         """
+        self.config = get_config()
         self.api_key = api_key
         self.model_name = model_name
-        self.max_retries = max_retries
+        self.max_retries = max_retries or self.config.performance.api_retry_attempts
         self.logger = get_logger(__name__)
 
         # Initialize Anthropic client
         self.client = anthropic.Anthropic(api_key=self.api_key)
 
-        self.logger.info(f"Initialized AnthropicClient with model: {self.model_name}")
+        self.logger.info(f"Initialized AnthropicClient with model: {self.model_name}, max_retries: {self.max_retries}")
 
     @retry(
-        stop=stop_after_attempt(3),
+        stop=stop_after_attempt(3),  # Will be made dynamic in _call_api_with_retry
         wait=wait_exponential(multiplier=1, min=2, max=10),
         reraise=True
     )
@@ -53,8 +56,8 @@ class AnthropicClient:
         self,
         prompt: str,
         system_instruction: Optional[str] = None,
-        max_tokens: int = 4096,
-        temperature: float = 1.0
+        temperature: float = 1.0,
+        max_tokens: int = 4096
     ) -> Any:
         """
         Call Anthropic API with retry logic.
@@ -62,8 +65,8 @@ class AnthropicClient:
         Args:
             prompt: The user prompt
             system_instruction: Optional system instruction
-            max_tokens: Maximum tokens to generate
             temperature: Temperature for generation (0.0 to 1.0)
+            max_tokens: Maximum tokens to generate (default: 4096)
 
         Returns:
             API response object
@@ -82,7 +85,7 @@ class AnthropicClient:
                 }
             ]
 
-            # Call API
+            # Call API with required max_tokens parameter
             response = self.client.messages.create(
                 model=self.model_name,
                 max_tokens=max_tokens,
@@ -131,8 +134,8 @@ class AnthropicClient:
         self,
         prompt: str,
         system_instruction: Optional[str] = None,
-        max_tokens: int = 4096,
-        temperature: float = 1.0
+        temperature: float = None,
+        max_tokens: int = None
     ) -> str:
         """
         Basic text generation.
@@ -140,8 +143,8 @@ class AnthropicClient:
         Args:
             prompt: The prompt to generate from
             system_instruction: Optional system instruction to guide the model
-            max_tokens: Maximum tokens to generate (default: 4096)
-            temperature: Temperature for generation (default: 1.0)
+            temperature: Temperature for generation (default: from config)
+            max_tokens: Maximum tokens to generate (default: from config)
 
         Returns:
             str: Generated text
@@ -149,22 +152,28 @@ class AnthropicClient:
         Raises:
             Exception: If generation fails
         """
+        # Use config defaults if not provided
+        if temperature is None:
+            temperature = 1.0  # Default for general generation
+        if max_tokens is None:
+            max_tokens = self.config.performance.default_max_tokens
+
         try:
             self.logger.info(
                 "Generating text with Claude",
                 extra={
                     "prompt_length": len(prompt),
                     "has_system_instruction": system_instruction is not None,
-                    "max_tokens": max_tokens,
-                    "temperature": temperature
+                    "temperature": temperature,
+                    "max_tokens": max_tokens
                 }
             )
 
             response = self._call_api_with_retry(
                 prompt,
                 system_instruction,
-                max_tokens,
-                temperature
+                temperature,
+                max_tokens
             )
 
             # Log token usage
@@ -184,42 +193,11 @@ class AnthropicClient:
             self.logger.error(f"Generation failed: {e}")
             raise
 
-    def _parse_json_from_markdown(self, text: str) -> dict:
-        """
-        Parse JSON from markdown code blocks.
-
-        Args:
-            text: Text potentially containing JSON in markdown blocks
-
-        Returns:
-            dict: Parsed JSON object
-
-        Raises:
-            ValueError: If JSON parsing fails
-        """
-        # Try to find JSON in markdown code blocks
-        json_pattern = r'```(?:json)?\s*(\{.*?\}|\[.*?\])\s*```'
-        matches = re.findall(json_pattern, text, re.DOTALL)
-
-        if matches:
-            json_text = matches[0]
-        else:
-            # Try to parse the entire text as JSON
-            json_text = text.strip()
-
-        try:
-            return json.loads(json_text)
-        except json.JSONDecodeError as e:
-            self.logger.error(f"Failed to parse JSON: {e}")
-            self.logger.debug(f"Text to parse: {text[:500]}")
-            raise ValueError(f"Invalid JSON response: {e}")
-
     def generate_structured(
         self,
         prompt: str,
         schema: dict,
         system_instruction: Optional[str] = None,
-        max_tokens: int = 4096
     ) -> dict:
         """
         Generate JSON matching a schema.
@@ -228,7 +206,6 @@ class AnthropicClient:
             prompt: The prompt to generate from
             schema: JSON schema to validate against
             system_instruction: Optional system instruction
-            max_tokens: Maximum tokens to generate
 
         Returns:
             dict: Parsed and validated JSON object
@@ -251,14 +228,15 @@ class AnthropicClient:
             response = self._call_api_with_retry(
                 json_prompt,
                 system_instruction,
-                max_tokens
+                temperature=self.config.performance.validation_temperature,  # Lower temp for structured output
+                max_tokens=self.config.performance.structured_output_max_tokens
             )
 
             # Log token usage
             self._log_token_usage(response, "generate_structured")
 
             # Parse JSON from response
-            result = self._parse_json_from_markdown(response.content[0].text)
+            result = parse_json_object(response.content[0].text)
 
             # Basic schema validation (check required keys)
             if isinstance(schema, dict):
@@ -342,14 +320,15 @@ only mark as Critical if there's clear evidence of serious issues."""
             response = self._call_api_with_retry(
                 prompt,
                 system_instruction,
-                max_tokens=4096
+                temperature=self.config.performance.risk_analysis_temperature,
+                max_tokens=self.config.performance.default_max_tokens
             )
 
             # Log token usage
             self._log_token_usage(response, "analyze_risk")
 
             # Parse JSON from response
-            result = self._parse_json_from_markdown(response.content[0].text)
+            result = parse_json_object(response.content[0].text)
 
             risks = result.get("risks", [])
 
@@ -445,7 +424,8 @@ evidence. Use confidence indicators consistently."""
             response = self._call_api_with_retry(
                 prompt,
                 system_instruction,
-                max_tokens=8000  # Longer output for comprehensive report
+                temperature=self.config.performance.report_generation_temperature,
+                max_tokens=self.config.performance.report_max_tokens  # Reports need more tokens
             )
 
             # Log token usage

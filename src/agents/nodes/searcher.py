@@ -5,26 +5,43 @@ This node executes all planned queries using the SearchOrchestrator and manages
 the search history.
 """
 
-from typing import Dict, List, Any
+from typing import Dict, List
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import time
 
 from src.tools.search import SearchOrchestrator, SearchResult
 from src.utils.logger import get_logger
+from src.utils.config import Config
+from src.utils.rate_limiter import get_search_rate_limiter
+from src.database.repository import ResearchRepository
 
 
 class SearchExecutorNode:
     """
     Executes search queries and collects results.
-    Uses SearchOrchestrator (SerpApi primary, Brave fallback).
+    Uses SearchOrchestrator (SerpApi primary, Brave fallback) with RateLimiter.
     """
 
-    def __init__(self):
-        """Initialize the search executor with SearchOrchestrator."""
-        self.orchestrator = SearchOrchestrator()
+    def __init__(self, config: Config, repository: ResearchRepository):
+        """
+        Initialize the search executor with SearchOrchestrator and RateLimiter.
+
+        Args:
+            config: Configuration object with all settings
+            repository: Database repository for persistence
+        """
+        self.config = config
+        self.repository = repository
+        self.orchestrator = SearchOrchestrator(config)
         self.logger = get_logger(__name__)
-        self.logger.info("Initialized SearchExecutorNode")
+
+        self.max_results_per_query = config.search.max_results_per_query
+        self.max_concurrent_searches = config.performance.max_concurrent_search_calls
+
+        # Initialize rate limiter for search API
+        self.rate_limiter = get_search_rate_limiter(max_concurrent=self.max_concurrent_searches)
+
 
     def execute(self, state: Dict) -> Dict:
         """
@@ -78,6 +95,26 @@ class SearchExecutorNode:
             current_iteration
         )
 
+        # Save search queries to database
+        session_id = state.get("session_id")
+        if session_id:
+            try:
+                for query in next_queries:
+                    self.repository.save_search_query(
+                        session_id=session_id,
+                        query=query,
+                        iteration=current_iteration,
+                        search_engine="serpapi",
+                        results_count=len(deduplicated_results) // len(next_queries) if next_queries else 0,
+                        relevance_score=relevance_score,
+                        execution_time_ms=int(execution_time)
+                    )
+                self.logger.info(f"Saved {len(next_queries)} search queries to database")
+
+            except Exception as e:
+                self.logger.error(f"Failed to save search queries to database: {e}", exc_info=True)
+                # Don't fail the workflow if DB save fails
+
         # Update state
         state["raw_search_results"] = deduplicated_results
         state["search_history"] = search_history
@@ -113,7 +150,7 @@ class SearchExecutorNode:
 
         # Try parallel execution first
         try:
-            with ThreadPoolExecutor(max_workers=5) as executor:
+            with ThreadPoolExecutor(max_workers=self.max_concurrent_searches) as executor:
                 future_to_query = {
                     executor.submit(self._execute_single_query, query): query
                     for query in queries
@@ -122,7 +159,7 @@ class SearchExecutorNode:
                 for future in as_completed(future_to_query):
                     query = future_to_query[future]
                     try:
-                        results = future.result(timeout=30)
+                        results = future.result(timeout=60)
                         all_results.extend(results)
                         self.logger.info(f"Query '{query}' returned {len(results)} results")
                     except Exception as e:
@@ -144,7 +181,7 @@ class SearchExecutorNode:
 
     def _execute_single_query(self, query: str) -> List[SearchResult]:
         """
-        Execute a single search query.
+        Execute a single search query with rate limiting.
 
         Args:
             query: Search query string
@@ -154,7 +191,11 @@ class SearchExecutorNode:
         """
         try:
             self.logger.debug(f"Executing query: {query}")
-            results = self.orchestrator.search(query, max_results=10)
+
+            # Use rate limiter to control concurrent API calls
+            with self.rate_limiter.acquire():
+                results = self.orchestrator.search(query, max_results=self.max_results_per_query)
+
             return results
         except Exception as e:
             self.logger.error(f"Error executing query '{query}': {e}")
@@ -277,7 +318,7 @@ class SearchExecutorNode:
         Returns:
             Updated search history
         """
-        timestamp = datetime.utcnow()
+        timestamp = datetime.now()
 
         for query in queries:
             search_entry = {

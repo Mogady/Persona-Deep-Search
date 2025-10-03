@@ -11,6 +11,7 @@ from datetime import datetime
 from urllib.parse import urlparse
 from tenacity import retry, stop_after_attempt, wait_exponential
 
+from dateutil import parser
 from src.utils.config import get_config
 from src.utils.logger import get_logger
 from src.utils.rate_limiter import get_search_rate_limiter
@@ -38,7 +39,6 @@ class SerpApiSearch:
         self.api_key = api_key
         self.rate_limiter = rate_limiter or get_search_rate_limiter(max_concurrent=10)
         self.logger = get_logger(__name__)
-        self.cache = {}  # Simple in-memory cache
 
         self.logger.info("Initialized SerpApiSearch with rate limiting")
 
@@ -64,11 +64,6 @@ class SerpApiSearch:
         Returns:
             List[SearchResult]: Parsed search results
         """
-        # Check cache first
-        cache_key = f"{query}:{max_results}:{search_type}"
-        if cache_key in self.cache:
-            self.logger.debug(f"Cache hit for query: {query}")
-            return self.cache[cache_key]
 
         # Use rate limiter
         with self.rate_limiter.acquire():
@@ -101,8 +96,6 @@ class SerpApiSearch:
                 # Parse results
                 results = self._parse_serp_response(data, query)
 
-                # Cache results
-                self.cache[cache_key] = results
 
                 self.logger.info(f"Found {len(results)} results for '{query}'")
 
@@ -283,9 +276,7 @@ class SerpApiSearch:
         if not date_str:
             return None
 
-        # Simple date parsing - enhance as needed
         try:
-            from dateutil import parser
             return parser.parse(date_str)
         except:
             return None

@@ -120,6 +120,7 @@ class ModelFactory:
             "query_generation": config.ai_models.gemini_flash_model,
             "filtering": config.ai_models.gemini_flash_model,
             "preliminary_analysis": config.ai_models.gemini_flash_model,
+            "categorization": config.ai_models.gemini_flash_model,
         }
 
         model_name = task_mapping.get(task_type)

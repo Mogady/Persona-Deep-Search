@@ -8,7 +8,10 @@ Focus: Professional role, companies, news, education, social media.
 
 Unique specific queries. Different angles (LinkedIn, news, sites).
 
-JSON: {{"queries": ["query 1", "query 2", "query 3"]}}
+IMPORTANT: Return ONLY a JSON array of strings. No explanations, no markdown code blocks, no additional text.
+Format: ["query 1", "query 2", "query 3"]
+
+Example: ["John Doe LinkedIn profile", "John Doe CEO company", "John Doe news articles"]
 """
 
 TARGETED_INVESTIGATION_PROMPT = """Deep investigation on: {target_name}
@@ -21,7 +24,8 @@ Generate 3-5 NEW queries: Dig into companies/roles, verify timeline, find connec
 
 Avoid: {explored_topics}
 
-JSON: {{"queries": ["query 1", "query 2", "query 3"]}}
+IMPORTANT: Return ONLY a JSON array of strings. No explanations, no markdown code blocks, no additional text.
+Format: ["query 1", "query 2", "query 3"]
 """
 
 CONNECTION_MINING_PROMPT = """Map networks for: {target_name}
@@ -30,7 +34,8 @@ People: {people} | Companies: {companies}
 
 Generate 3-5 queries: Boards, partnerships, investments, family, shared affiliations.
 
-JSON: {{"queries": ["query 1", "query 2", "query 3"]}}
+IMPORTANT: Return ONLY a JSON array of strings. No explanations, no markdown code blocks, no additional text.
+Format: ["query 1", "query 2", "query 3"]
 """
 
 VALIDATION_PROMPT = """Verify info for: {target_name}
@@ -39,7 +44,8 @@ Low-confidence facts: {low_confidence_facts}
 
 Generate 3-5 queries: Find more sources, resolve contradictions, authoritative (.gov/.edu/major news).
 
-JSON: {{"queries": ["query 1", "query 2", "query 3"]}}
+IMPORTANT: Return ONLY a JSON array of strings. No explanations, no markdown code blocks, no additional text.
+Format: ["query 1", "query 2", "query 3"]
 """
 
 # Helper function to select the right prompt based on iteration

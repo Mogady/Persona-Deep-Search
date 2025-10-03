@@ -5,23 +5,22 @@ This node is responsible for creating search queries that adapt based on the res
 iteration and previously discovered information.
 """
 
-from typing import Dict, List, Set, Any
-from datetime import datetime
-import json
+from typing import Dict, List, Set
 import re
 import numpy as np
-from collections import defaultdict
 
 from src.tools.models import ModelFactory
 from src.utils.logger import get_logger
+from src.utils.similarity import cosine_similarity
+from src.utils.config import Config
+from src.utils.json_parser import parse_json_array
+from src.database.repository import ResearchRepository
 from src.prompts.templates.planner_prompt import (
     BROAD_DISCOVERY_PROMPT,
     TARGETED_INVESTIGATION_PROMPT,
     CONNECTION_MINING_PROMPT,
     VALIDATION_PROMPT,
-    get_prompt_for_iteration
 )
-
 
 class QueryPlannerNode:
     """
@@ -29,11 +28,22 @@ class QueryPlannerNode:
     Uses Gemini Flash 2.5 for fast query generation.
     """
 
-    def __init__(self):
-        """Initialize the query planner with Gemini Flash client."""
+    def __init__(self, config: Config, repository: ResearchRepository):
+        """
+        Initialize the query planner with Gemini Flash client.
+
+        Args:
+            config: Configuration object with all settings
+            repository: Database repository for persistence
+        """
+        self.config = config
+        self.repository = repository
         self.client = ModelFactory.get_optimal_model_for_task("query_generation")
         self.logger = get_logger(__name__)
-        self.logger.info("Initialized QueryPlannerNode with Gemini Flash")
+
+        self.min_queries = config.performance.min_queries_per_iteration
+        self.max_queries = config.performance.max_queries_per_iteration
+        self.temperature = config.performance.query_generation_temperature
 
     def execute(self, state: Dict) -> Dict:
         """
@@ -75,18 +85,17 @@ class QueryPlannerNode:
         # Filter out duplicate queries
         queries = self._filter_duplicate_queries(queries, search_history)
 
-        # Ensure we have at least 3 queries and at most 5
-        if len(queries) < 3:
+        # Ensure we have min queries and don't exceed max
+        if len(queries) < self.min_queries:
             self.logger.warning(
-                f"Only {len(queries)} queries generated, adding fallback queries"
+                f"Only {len(queries)} queries generated, adding fallback queries (min: {self.min_queries})"
             )
             queries = self._add_fallback_queries(queries, target_name, current_iteration)
 
-        queries = queries[:5]  # Limit to 5
+        queries = queries[:self.max_queries]  # Limit to max configured
 
         self.logger.info(f"Generated {len(queries)} queries for iteration {current_iteration}")
 
-        # Update state
         state["next_queries"] = queries
 
         return state
@@ -106,7 +115,7 @@ class QueryPlannerNode:
         prompt = BROAD_DISCOVERY_PROMPT.format(target_name=target_name)
 
         try:
-            response = self.client.generate(prompt)
+            response = self.client.generate(prompt, temperature=self.temperature)
             queries = self._parse_queries_from_response(response)
 
             if not queries:
@@ -154,19 +163,19 @@ class QueryPlannerNode:
         entities = self._extract_entities(facts)
 
         # Create facts summary
-        facts_summary = self._create_facts_summary(facts[:10])  # Top 10 facts
+        facts_summary = "\n".join(facts[:10])  # Top 10 facts
 
         prompt = TARGETED_INVESTIGATION_PROMPT.format(
             target_name=target_name,
             facts_summary=facts_summary,
-            people=", ".join(entities.get("people", [])[:5]),
-            companies=", ".join(entities.get("companies", [])[:5]),
-            locations=", ".join(entities.get("locations", [])[:3]),
+            people=", ".join(entities.get("people", [])),
+            companies=", ".join(entities.get("companies", [])),
+            locations=", ".join(entities.get("locations", [])),
             explored_topics=", ".join(list(explored_topics)[:10])
         )
 
         try:
-            response = self.client.generate(prompt)
+            response = self.client.generate(prompt, temperature=self.temperature)
             queries = self._parse_queries_from_response(response)
 
             if not queries and entities.get("companies"):
@@ -207,12 +216,12 @@ class QueryPlannerNode:
 
         prompt = CONNECTION_MINING_PROMPT.format(
             target_name=target_name,
-            people=", ".join(entities.get("people", [])[:8]),
-            companies=", ".join(entities.get("companies", [])[:8])
+            people=", ".join(entities.get("people", [])),
+            companies=", ".join(entities.get("companies", []))
         )
 
         try:
-            response = self.client.generate(prompt)
+            response = self.client.generate(prompt, temperature=self.temperature)
             queries = self._parse_queries_from_response(response)
 
             if not queries:
@@ -267,7 +276,7 @@ class QueryPlannerNode:
         )
 
         try:
-            response = self.client.generate(prompt)
+            response = self.client.generate(prompt, temperature=self.temperature)
             queries = self._parse_queries_from_response(response)
 
             if not queries and low_confidence_facts:
@@ -320,8 +329,8 @@ class QueryPlannerNode:
 
         except Exception as e:
             # Fallback to word overlap if embedding fails
-            self.logger.warning(f"Embedding-based filtering failed, using word overlap: {e}")
-            return self._filter_with_word_overlap(queries, previous_queries)
+            self.logger.warning(f"Embedding-based filtering failed, cancel filtering: {e}")
+            return queries
 
     def _filter_with_embeddings(
         self,
@@ -363,12 +372,11 @@ class QueryPlannerNode:
         for i, query in enumerate(queries):
             # Check for exact match first
             if query.lower() in [pq.lower() for pq in previous_queries]:
-                self.logger.debug(f"Filtering exact duplicate: {query}")
                 continue
 
             # Calculate cosine similarity with all previous queries
             query_vec = query_vecs[i]
-            similarities = self._cosine_similarity(query_vec, prev_vecs)
+            similarities = cosine_similarity(query_vec, prev_vecs)
 
             # Check if any previous query is too similar
             max_similarity = np.max(similarities) if len(similarities) > 0 else 0.0
@@ -381,79 +389,6 @@ class QueryPlannerNode:
                 continue
 
             filtered.append(query)
-
-        return filtered
-
-    def _cosine_similarity(
-        self,
-        vec1: np.ndarray,
-        vec2_array: np.ndarray
-    ) -> np.ndarray:
-        """
-        Calculate cosine similarity between a vector and an array of vectors.
-
-        Args:
-            vec1: Single embedding vector
-            vec2_array: Array of embedding vectors
-
-        Returns:
-            Array of similarity scores (0.0 to 1.0)
-        """
-        # Normalize vectors
-        vec1_norm = vec1 / np.linalg.norm(vec1)
-
-        # Handle empty array
-        if len(vec2_array) == 0:
-            return np.array([])
-
-        vec2_norms = vec2_array / np.linalg.norm(vec2_array, axis=1, keepdims=True)
-
-        # Calculate cosine similarity
-        similarities = np.dot(vec2_norms, vec1_norm)
-
-        return similarities
-
-    def _filter_with_word_overlap(
-        self,
-        queries: List[str],
-        previous_queries: List[str]
-    ) -> List[str]:
-        """
-        Fallback filter using word overlap (Jaccard similarity).
-
-        Args:
-            queries: Candidate queries
-            previous_queries: Previous query texts
-
-        Returns:
-            Filtered list of unique queries
-        """
-        filtered = []
-
-        for query in queries:
-            query_lower = query.lower()
-
-            # Check for exact match
-            if query_lower in [pq.lower() for pq in previous_queries]:
-                self.logger.debug(f"Filtering duplicate query: {query}")
-                continue
-
-            # Check for high similarity (simple word overlap)
-            is_similar = False
-            query_words = set(query_lower.split())
-
-            for prev_query in previous_queries:
-                prev_words = set(prev_query.lower().split())
-                overlap = len(query_words & prev_words)
-                total = len(query_words | prev_words)
-
-                if total > 0 and overlap / total > 0.7:  # 70% similarity threshold
-                    self.logger.debug(f"Filtering similar query: {query}")
-                    is_similar = True
-                    break
-
-            if not is_similar:
-                filtered.append(query)
 
         return filtered
 
@@ -472,9 +407,9 @@ class QueryPlannerNode:
             return {"people": [], "companies": [], "locations": []}
 
         try:
-            # Combine fact contents (limit to prevent huge prompts)
+            # Combine fact contents
             combined_text = "\n".join([
-                f.get("content", "") for f in facts[:20]  # Top 20 facts
+                f.get("content", "") for f in facts
             ])
 
             # Use Gemini's advanced entity extraction
@@ -537,96 +472,26 @@ class QueryPlannerNode:
             "locations": sorted(list(entities["locations"]))[:10]
         }
 
-    def _create_facts_summary(self, facts: List[Dict]) -> str:
-        """
-        Create a concise summary of facts.
-
-        Args:
-            facts: List of facts
-
-        Returns:
-            Summary string
-        """
-        if not facts:
-            return "No facts discovered yet"
-
-        summary_lines = []
-        for i, fact in enumerate(facts[:10], 1):
-            content = fact.get("content", "")[:100]  # Truncate long facts
-            summary_lines.append(f"{i}. {content}")
-
-        return "\n".join(summary_lines)
 
     def _parse_queries_from_response(self, response: str) -> List[str]:
         """
-        Parse queries from AI response (expects JSON format).
-        Handles markdown code blocks, raw JSON, and fallback to line parsing.
-
-        Args:
-            response: AI model response
-
-        Returns:
-            List of extracted queries
+        Parse queries from AI response.
+        Expects strict JSON array format: ["query1", "query2", ...]
         """
-        if not response or not response.strip():
-            self.logger.warning("Empty response from LLM")
-            return []
-
         try:
-            # Strategy 1: Try to extract JSON from markdown code blocks
-            markdown_pattern = r'```(?:json)?\s*(\{.*?\})\s*```'
-            markdown_match = re.search(markdown_pattern, response, re.DOTALL)
 
-            if markdown_match:
-                json_str = markdown_match.group(1)
-                try:
-                    data = json.loads(json_str)
-                    queries = data.get("queries", [])
+            queries = parse_json_array(response, fallback=[])
 
-                    if isinstance(queries, list) and queries:
-                        cleaned = [q.strip() for q in queries if q and q.strip()]
-                        self.logger.debug(f"Extracted {len(cleaned)} queries from markdown JSON")
-                        return cleaned
-                except json.JSONDecodeError:
-                    self.logger.debug("Failed to parse JSON from markdown block")
+            cleaned = []
+            for q in queries:
+                if isinstance(q, str) and len(q.strip()) > 10:
+                    cleaned.append(q.strip())
 
-            # Strategy 2: Try to find raw JSON in response
-            json_match = re.search(r'\{.*?\}', response, re.DOTALL)
-            if json_match:
-                try:
-                    data = json.loads(json_match.group())
-                    queries = data.get("queries", [])
-
-                    if isinstance(queries, list) and queries:
-                        cleaned = [q.strip() for q in queries if q and q.strip()]
-                        self.logger.debug(f"Extracted {len(cleaned)} queries from raw JSON")
-                        return cleaned
-                except json.JSONDecodeError:
-                    self.logger.debug("Failed to parse raw JSON")
-
-            # Strategy 3: Fallback - extract queries from numbered/bulleted lines
-            lines = response.split('\n')
-            queries = []
-            for line in lines:
-                line = line.strip()
-                # Look for numbered lists, bullets, or quoted strings
-                if re.match(r'^\d+\.', line) or line.startswith('-') or line.startswith('*'):
-                    # Remove numbering/bullets
-                    query = re.sub(r'^[\d\-\*\.]+\s*', '', line).strip()
-                    # Remove quotes if present
-                    query = query.strip('"\'')
-                    if query and len(query) > 5:  # Minimum query length
-                        queries.append(query)
-
-            if queries:
-                self.logger.debug(f"Extracted {len(queries)} queries from text lines")
-                return queries[:5]
-
-            self.logger.warning("Could not extract queries from response")
-            return []
+            self.logger.debug(f"Parsed {len(cleaned)} queries from response")
+            return cleaned
 
         except Exception as e:
-            self.logger.error(f"Error parsing queries: {e}")
+            self.logger.error(f"Failed to parse queries: {e}")
             return []
 
     def _add_fallback_queries(
