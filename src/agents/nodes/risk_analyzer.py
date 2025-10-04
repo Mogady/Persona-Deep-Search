@@ -126,8 +126,8 @@ class RiskAnalyzerNode:
                     for risk in final_risks:
                         db_risks.append({
                             "session_id": session_id,
-                            "severity": risk["severity"].lower(),
-                            "category": risk["category"].lower(),
+                            "severity": risk["severity"].upper(),
+                            "category": risk["category"].upper(),
                             "description": risk["description"],
                             "evidence": risk["evidence"],
                             "confidence": risk["confidence"],
