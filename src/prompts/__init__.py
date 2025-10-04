@@ -1,7 +1,7 @@
 """
-Prompt templates for the Deep Research AI Agent.
+Prompt templates.
 
-This module contains all prompt templates used by agent nodes.
+This module contains all prompt templates used by nodes.
 """
 
 from .templates.planner_prompt import (

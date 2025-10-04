@@ -8,11 +8,11 @@ import json
 
 class ReportGeneratorNode:
     """
-    Generates the final comprehensive report using Claude Sonnet.
+    Generates the final comprehensive report.
     """
     def __init__(self, config: Config, repository: ResearchRepository):
         """
-        Initialize the report generator with Claude Sonnet.
+        Initialize the report generator.
 
         Args:
             config: Configuration object with all settings
@@ -20,13 +20,13 @@ class ReportGeneratorNode:
         """
         self.config = config
         self.repository = repository
-        self.client = ModelFactory.get_optimal_model_for_task("report_generation") # Claude Sonnet
+        self.client = ModelFactory.get_optimal_model_for_task("report_generation")
         self.logger = get_logger(__name__)
 
         # Load config values
         self.temperature = config.performance.report_generation_temperature
 
-        self.logger.info(f"Initialized ReportGeneratorNode with Claude Sonnet (temp: {self.temperature})")
+        self.logger.debug(f"Initialized ReportGeneratorNode with (temp: {self.temperature})")
 
     def execute(self, state: Dict) -> Dict:
         """
@@ -57,7 +57,7 @@ class ReportGeneratorNode:
                         report=report,
                         connection_graph=connection_graph
                     )
-                    self.logger.info("Saved final report to database")
+                    self.logger.debug("Saved final report to database")
 
                 except Exception as e:
                     self.logger.error(f"Failed to save final report to database: {e}", exc_info=True)

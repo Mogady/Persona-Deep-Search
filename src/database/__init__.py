@@ -1,5 +1,5 @@
 """
-Database module for the Deep Research AI Agent.
+Database module.
 
 This module provides database models and repository pattern for data persistence.
 """

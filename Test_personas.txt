@@ -1,0 +1,81 @@
+### Evaluation Persona 1: "The Clean Executive"
+
+This persona is designed to test the agent's ability to conduct comprehensive fact-gathering and build a detailed, accurate profile of a high-profile individual with a seemingly straightforward public record. The challenge is to go beyond the Wikipedia summary and uncover nuanced details.
+
+**Candidate:** **Satya Nadella** (CEO of Microsoft)
+
+**Justification:** Nadella has a widely documented and positive public image. He is perfect for testing the agent's ability to find "15-20 hidden facts (easy to medium difficulty)". [cite_start]The agent must demonstrate its capacity for deep biographical and professional history extraction [cite: 14] without being distracted by major controversies.
+
+**Ground Truth (Hidden Facts to Discover):**
+
+1.  **Early Career:** He worked at Sun Microsystems before joining Microsoft in 1992.
+2.  **Specific Pre-CEO Roles:** He was the Executive VP of Microsoft's Cloud and Enterprise group, a key driver of the company's move to cloud computing.
+3.  **Key Project Leadership:** He led the development of Bing before it was a major search engine.
+4.  **Academic Detail:** He earned a Master's degree in computer science from the University of Wisconsin–Milwaukee, not just his more famous MBA from the University of Chicago.
+5.  **Personal Interests:** He is an avid cricket fan, having played on his school team.
+6.  **Citizenship Status:** He was born in India and is now a U.S. citizen.
+7.  **Author:** He authored the book "Hit Refresh" in 2017.
+8.  **Board Memberships (Current/Past):** He is on the Board of Trustees for the University of Chicago and the Fred Hutchinson Cancer Research Center.
+9.  **Major Acquisitions Under His Leadership:** Key acquisitions include LinkedIn ($26.2B), GitHub ($7.5B), and Activision Blizzard (~$69B).
+10. **Internal Microsoft Culture Shift:** He is widely credited with shifting Microsoft's culture from a "know-it-all" to a "learn-it-all" mindset.
+11. **Family Connection:** His father, B.N. Yugandhar, was a prominent Indian Administrative Service officer.
+12. **Early Life Detail:** He attended the Hyderabad Public School, Begumpet.
+13. **Investment/Philanthropy:** He has made significant investments in healthcare and AI for accessibility, partly inspired by his late son's medical condition.
+14. **First Microsoft Project:** One of his first projects at Microsoft was working on the Windows NT operating system.
+15. **Compensation Details:** Discovering specific figures of his annual compensation and stock awards from SEC filings.
+
+***
+
+### Evaluation Persona 2: "The Controversial Entrepreneur"
+
+This persona tests the agent's risk detection, connection mapping, and ability to synthesize conflicting information. The agent must identify red flags, failed ventures, and complex relationships.
+
+**Candidate:** **Adam Neumann** (Co-founder of WeWork)
+
+**Justification:** Neumann's career is a perfect storm of massive success, high-profile failure, and controversial behavior. This profile will test the agent's ability to find "medium to hard difficulty" facts related to financial irregularities, legal issues, and reputational concerns.
+
+**Ground Truth (Hidden Facts to Discover):**
+
+1.  **Early Life/Military Service:** He served as an officer in the Israeli Navy.
+2.  **Pre-WeWork Ventures:** He founded a children's clothing company called Krawlers, which had limited success.
+3.  **Real Estate Transactions:** He personally bought properties and then leased them back to WeWork, a major conflict of interest.
+4.  **Trademark Controversy:** WeWork's parent company paid him nearly $6 million for the rights to the "We" trademark, which he owned.
+5.  **Specific Investor Relationships:** Map his close relationship with Masayoshi Son of SoftBank and the details of their initial investment deals.
+6.  **"WeLive" and "WeGrow":** Detail these failed WeWork spinoffs into residential living and education.
+7.  **S-1 Filing Red Flags:** Identify specific concerns raised in the original IPO filing, such as the complex corporate structure and Neumann's personal loans from the company.
+8.  **Exit Package Details:** The exact (and controversial) size of his golden parachute after being ousted as CEO (initially valued at over $1 billion).
+9.  **Post-WeWork Venture:** His new real estate venture, "Flow," and its initial funding from Andreessen Horowitz (a16z).
+10. **Family Connections:** His wife, Rebekah Neumann, was a co-founder and held executive titles, also being a central figure in the company's culture and controversy.
+11. **Reported Behavioral Issues:** Find credible news reports detailing his unconventional management style and lavish corporate spending (e.g., on the company jet).
+12. **Lawsuits:** Identify lawsuits filed by employees or shareholders following the failed IPO.
+13. **Kibbutz Upbringing:** He spent part of his childhood on a kibbutz in Israel.
+14. **Specific Financial Losses:** Uncover the exact figures of WeWork's reported financial losses in the years leading up to the IPO attempt.
+15. **Connection to Other Public Figures:** Map his relationships with other tech executives and investors beyond Masayoshi Son.
+
+***
+
+### Evaluation Persona 3: "The Low-Profile Investor"
+
+This persona is the most challenging and is designed to test the agent's ability to perform creative search strategies and synthesize fragmented information to uncover non-obvious connections.
+
+**Candidate:** **Peter Thiel** (Co-founder of PayPal, Palantir Technologies; early investor)
+
+**Justification:** While famous in tech circles, Thiel's influence is often exerted behind the scenes. His public statements are calculated, and his network of investments and political connections is vast but not always centrally documented. This tests the "hard difficulty" requirement perfectly.
+
+**Ground Truth (Hidden Facts to Discover):**
+
+1.  **"PayPal Mafia":** Identify the key members (Reid Hoffman, Elon Musk, etc.) and trace their subsequent successful ventures.
+2.  **Early Facebook Investment:** He was the first outside investor in Facebook, with a $500,000 angel investment.
+3.  **Clarium Capital:** Details about his macro hedge fund, its initial success, and subsequent significant losses.
+4.  **Thiel Fellowship:** Details of the program he founded, which pays students to drop out of college and start companies.
+5.  **Palantir's Early Funding:** Palantir's first backing came from the CIA's venture capital arm, In-Q-Tel.
+6.  **Political Affiliations/Donations:** Specific details of his support for various political campaigns and causes (e.g., his speech at the 2016 RNC).
+7.  **Litigation Funding:** His secret funding of the Hulk Hogan lawsuit against Gawker Media.
+8.  **New Zealand Citizenship:** Details on how and why he obtained New Zealand citizenship and his real estate holdings there.
+9.  **Philosophical Influences:** His connection to the philosopher René Girard and how it shapes his business and worldview.
+10. **Author:** Co-author of the book "The Diversity Myth." Author of "Zero to One."
+11. **Early Career:** He worked as a securities lawyer for Sullivan & Cromwell and was a clerk for Judge James Larry Edmondson.
+12. **Founders Fund:** Identify some of the less-obvious, early-stage investments made by his venture capital firm (e.g., Airbnb, Stripe, SpaceX).
+13. **Seasteading Institute:** His involvement and early funding of the project to create autonomous ocean cities.
+14. **Chess Prodigy:** He was a US-rated Chess Master and one of the highest-ranked under-21 players in the country.
+15. **Views on Education:** Find interviews or writings where he elaborates on his critical stance on higher education.

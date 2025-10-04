@@ -1,5 +1,6 @@
 from typing import TypedDict, List, Dict, Set, Optional
 from datetime import datetime
+import asyncio
 
 class Fact(TypedDict):
     content: str
@@ -55,6 +56,7 @@ class ResearchState(TypedDict):
     # Metadata
     start_time: datetime
     last_update: Optional[datetime]
+    stop_event: asyncio.Event
 
     # Output
     final_report: Optional[str]

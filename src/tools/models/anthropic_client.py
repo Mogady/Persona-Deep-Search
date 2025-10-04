@@ -1,7 +1,7 @@
 """
-Anthropic Claude client for complex reasoning and analysis tasks.
+Anthropic client for complex reasoning and analysis tasks.
 
-This module provides a robust client for Claude models with retry logic,
+This module provides a robust client for Anthropic models with retry logic,
 structured output support, and comprehensive logging.
 """
 
@@ -18,7 +18,7 @@ from src.utils.config import get_config
 
 class AnthropicClient:
     """
-    Client for Anthropic Claude models.
+    Client for Anthropic models.
 
     Handles complex reasoning tasks including:
     - Risk assessment
@@ -29,7 +29,7 @@ class AnthropicClient:
 
     def __init__(self, api_key: str, model_name: str, max_retries: int = None):
         """
-        Initialize the Anthropic Claude client.
+        Initialize the Anthropic client.
 
         Args:
             api_key: Anthropic API key for authentication
@@ -45,7 +45,7 @@ class AnthropicClient:
         # Initialize Anthropic client
         self.client = anthropic.Anthropic(api_key=self.api_key)
 
-        self.logger.info(f"Initialized AnthropicClient with model: {self.model_name}, max_retries: {self.max_retries}")
+        self.logger.debug(f"Initialized AnthropicClient with model: {self.model_name}, max_retries: {self.max_retries}")
 
     @retry(
         stop=stop_after_attempt(3),  # Will be made dynamic in _call_api_with_retry
@@ -106,30 +106,6 @@ class AnthropicClient:
             self.logger.error(f"API error: {e}")
             raise
 
-    def _log_token_usage(self, response: Any, operation: str) -> None:
-        """
-        Extract and log token counts from API response.
-
-        Args:
-            response: API response object
-            operation: Name of the operation (for logging)
-        """
-        try:
-            if hasattr(response, 'usage') and response.usage:
-                usage = response.usage
-                self.logger.info(
-                    f"{operation} token usage",
-                    extra={
-                        "operation": operation,
-                        "model": self.model_name,
-                        "input_tokens": usage.input_tokens,
-                        "output_tokens": usage.output_tokens,
-                        "total_tokens": usage.input_tokens + usage.output_tokens
-                    }
-                )
-        except Exception as e:
-            self.logger.warning(f"Could not extract token usage: {e}")
-
     def generate(
         self,
         prompt: str,
@@ -159,8 +135,8 @@ class AnthropicClient:
             max_tokens = self.config.performance.default_max_tokens
 
         try:
-            self.logger.info(
-                "Generating text with Claude",
+            self.logger.debug(
+                "Generating text with Anthropic model",
                 extra={
                     "prompt_length": len(prompt),
                     "has_system_instruction": system_instruction is not None,
@@ -176,13 +152,10 @@ class AnthropicClient:
                 max_tokens
             )
 
-            # Log token usage
-            self._log_token_usage(response, "generate")
-
             # Extract text from response
             generated_text = response.content[0].text
 
-            self.logger.info(
+            self.logger.debug(
                 "Text generation complete",
                 extra={"response_length": len(generated_text)}
             )
@@ -214,8 +187,8 @@ class AnthropicClient:
             ValueError: If response doesn't match schema
         """
         try:
-            self.logger.info(
-                "Generating structured output with Claude",
+            self.logger.debug(
+                "Generating structured output with Anthropic model",
                 extra={
                     "prompt_length": len(prompt),
                     "schema_keys": list(schema.keys()) if isinstance(schema, dict) else None
@@ -232,9 +205,6 @@ class AnthropicClient:
                 max_tokens=self.config.performance.structured_output_max_tokens
             )
 
-            # Log token usage
-            self._log_token_usage(response, "generate_structured")
-
             # Parse JSON from response
             result = parse_json_object(response.content[0].text)
 
@@ -244,7 +214,7 @@ class AnthropicClient:
                     if key not in result:
                         self.logger.warning(f"Missing key in response: {key}")
 
-            self.logger.info("Structured generation complete")
+            self.logger.debug("Structured generation complete")
 
             return result
 
@@ -275,8 +245,8 @@ class AnthropicClient:
             List[dict]: List of identified risks with severity and evidence
         """
         try:
-            self.logger.info(
-                "Analyzing risks with Claude",
+            self.logger.debug(
+                "Analyzing risks with Anthropic model",
                 extra={
                     "target_name": target_name,
                     "facts_count": len(facts)
@@ -324,15 +294,12 @@ only mark as Critical if there's clear evidence of serious issues."""
                 max_tokens=self.config.performance.default_max_tokens
             )
 
-            # Log token usage
-            self._log_token_usage(response, "analyze_risk")
-
             # Parse JSON from response
             result = parse_json_object(response.content[0].text)
 
             risks = result.get("risks", [])
 
-            self.logger.info(
+            self.logger.debug(
                 "Risk analysis complete",
                 extra={"risks_count": len(risks)}
             )
@@ -366,8 +333,8 @@ only mark as Critical if there's clear evidence of serious issues."""
             str: Markdown-formatted report
         """
         try:
-            self.logger.info(
-                "Generating report with Claude",
+            self.logger.debug(
+                "Generating report with Anthropic model",
                 extra={
                     "target_name": target_name,
                     "facts_count": len(facts),
@@ -428,12 +395,9 @@ evidence. Use confidence indicators consistently."""
                 max_tokens=self.config.performance.report_max_tokens  # Reports need more tokens
             )
 
-            # Log token usage
-            self._log_token_usage(response, "generate_report")
-
             report = response.content[0].text
 
-            self.logger.info(
+            self.logger.debug(
                 "Report generation complete",
                 extra={"report_length": len(report)}
             )

@@ -15,11 +15,12 @@ from src.utils.logger import get_logger
 from src.utils.config import Config
 from datetime import datetime
 import uuid
+import asyncio
 
 class ResearchWorkflow:
     """
-    LangGraph workflow orchestration for deep research agent.
-    Coordinates 7 agent nodes with conditional looping.
+    LangGraph workflow orchestration.
+    Coordinates 7 nodes with conditional looping.
     """
 
     def __init__(self, repository: ResearchRepository, config: Config):
@@ -43,7 +44,7 @@ class ResearchWorkflow:
         self.connection_mapper = ConnectionMapperNode(config, repository)
         self.reporter = ReportGeneratorNode(config, repository)
 
-        self.logger.info("Initialized ResearchWorkflow with all 7 nodes (config + repository enabled)")
+        self.logger.debug("Initialized ResearchWorkflow with all 7 nodes (config + repository enabled)")
 
         # Build and compile graph
         self.graph = self._create_graph()
@@ -89,6 +90,11 @@ class ResearchWorkflow:
         """
         Conditional logic: Continue research or generate report?
         """
+        # 1. Check for the stop signal first
+        stop_event = state.get("stop_event")
+        if stop_event and stop_event.is_set():
+            self.logger.warning("Stop event received. Terminating research workflow.")
+            return "report" # End the loop
         current_iteration = state.get("current_iteration", 1)
         research_depth = state.get("research_depth", 7)
         facts_before = state.get("facts_before_iteration", 0)
@@ -109,7 +115,7 @@ class ResearchWorkflow:
         return "continue"
 
     def _run_node(self, node_executor, state: ResearchState, node_name: str) -> ResearchState:
-        self.logger.info(f"Running {node_name} - Iteration {state.get('current_iteration', 1)}")
+        self.logger.debug(f"Running {node_name} - Iteration {state.get('current_iteration', 1)}")
         try:
             state = node_executor(state)
             self._save_checkpoint(state, node_name)
@@ -164,13 +170,18 @@ class ResearchWorkflow:
         self,
         target_name: str,
         research_depth: int = 7,
-        session_id: Optional[str] = None
+        session_id: Optional[str] = None,
+        stop_event: Optional[asyncio.Event] = None,
+
     ) -> ResearchState:
         """
         Execute full research workflow for a target.
         """
         if not session_id:
             session_id = str(uuid.uuid4())
+
+        if stop_event is None:
+            stop_event = asyncio.Event()
 
         initial_state: ResearchState = {
             "target_name": target_name,
@@ -186,7 +197,7 @@ class ResearchWorkflow:
             "next_queries": [],
             "explored_topics": set(),
             "raw_search_results": [],
-            "start_time": datetime.utcnow(),
+            "start_time": datetime.now(),
             "last_update": None,
             "final_report": None,
             "connection_graph": None

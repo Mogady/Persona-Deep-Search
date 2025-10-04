@@ -33,7 +33,6 @@ class SearchConfig:
     """Configuration for search APIs."""
     serpapi_key: str
     brave_api_key: Optional[str] = None
-    firecrawl_api_key: Optional[str] = None
     search_type: str = "web"
     max_results_per_query: int = 10
     max_concurrent_searches: int = 10
@@ -57,7 +56,6 @@ class DatabaseConfig:
 class ApplicationConfig:
     """General application settings."""
     max_search_iterations: int = 7
-    max_facts_per_session: int = 100
     research_timeout_minutes: int = 15
     log_level: str = "INFO"
     debug_mode: bool = False
@@ -139,10 +137,7 @@ class Config:
     search: SearchConfig
     database: DatabaseConfig
     application: ApplicationConfig
-    gcp: GCPConfig
-    logging: LoggingConfig
     performance: PerformanceConfig
-    chainlit: ChainlitConfig
 
     @classmethod
     def from_env(cls) -> "Config":
@@ -193,7 +188,6 @@ class Config:
         search = SearchConfig(
             serpapi_key=os.getenv("SERPAPI_KEY"),
             brave_api_key=os.getenv("BRAVE_API_KEY"),
-            firecrawl_api_key=os.getenv("FIRECRAWL_API_KEY"),
             search_type=os.getenv("SEARCH_TYPE"),
             max_results_per_query=int(os.getenv("MAX_SEARCH_RESULTS_PER_QUERY")),
             max_concurrent_searches=int(os.getenv("MAX_CONCURRENT_SEARCH_CALLS")),
@@ -201,7 +195,7 @@ class Config:
 
         # Database Configuration
         database = DatabaseConfig(
-            database_url=os.getenv("DATABASE_URL"),
+            database_url=os.getenv("DATABASE_UR"),
             db_user=os.getenv("DB_USER"),
             db_password=os.getenv("DB_PASSWORD"),
             db_name=os.getenv("DB_NAME"),
@@ -213,34 +207,12 @@ class Config:
         # Application Configuration
         application = ApplicationConfig(
             max_search_iterations=int(os.getenv("MAX_SEARCH_ITERATIONS")),
-            max_facts_per_session=int(os.getenv("MAX_FACTS_PER_SESSION")),
             research_timeout_minutes=int(os.getenv("RESEARCH_TIMEOUT_MINUTES")),
             log_level=os.getenv("LOG_LEVEL"),
             debug_mode=os.getenv("DEBUG_MODE").lower() == "true",
             environment=os.getenv("ENVIRONMENT"),
             test_mode=os.getenv("TEST_MODE").lower() == "true",
             mock_api_calls=os.getenv("MOCK_API_CALLS").lower() == "true",
-        )
-
-        # GCP Configuration
-        gcp = GCPConfig(
-            project_id=os.getenv("GCP_PROJECT_ID"),
-            region=os.getenv("GCP_REGION"),
-            use_secret_manager=os.getenv("USE_SECRET_MANAGER").lower() == "true",
-            secret_manager_project=os.getenv("SECRET_MANAGER_PROJECT"),
-            storage_bucket=os.getenv("GCP_STORAGE_BUCKET"),
-            enable_gcs_storage=os.getenv("ENABLE_GCS_STORAGE").lower() == "true",
-        )
-
-        # Logging Configuration
-        logging_config = LoggingConfig(
-            log_file_path=os.getenv("LOG_FILE_PATH"),
-            structured_logging=os.getenv("STRUCTURED_LOGGING").lower() == "true",
-            log_max_bytes=int(os.getenv("LOG_MAX_BYTES")),
-            log_backup_count=int(os.getenv("LOG_BACKUP_COUNT")),
-            enable_audit_log=os.getenv("ENABLE_AUDIT_LOG").lower() == "true",
-            audit_log_path=os.getenv("AUDIT_LOG_PATH"),
-            anonymize_logs=os.getenv("ANONYMIZE_LOGS").lower() == "true",
         )
 
         # Performance Configuration
@@ -268,12 +240,7 @@ class Config:
             structured_output_max_tokens=int(os.getenv("STRUCTURED_OUTPUT_MAX_TOKENS", "4096")),
         )
 
-        # Chainlit Configuration
-        chainlit = ChainlitConfig(
-            host=os.getenv("CHAINLIT_HOST"),
-            port=int(os.getenv("CHAINLIT_PORT")),
-            debug=os.getenv("CHAINLIT_DEBUG").lower() == "true",
-        )
+
 
         logger.info("Configuration loaded successfully")
 
@@ -282,10 +249,7 @@ class Config:
             search=search,
             database=database,
             application=application,
-            gcp=gcp,
-            logging=logging_config,
-            performance=performance,
-            chainlit=chainlit,
+            performance=performance
         )
 
     def validate(self) -> None:

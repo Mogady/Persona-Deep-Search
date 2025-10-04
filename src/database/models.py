@@ -1,5 +1,5 @@
 """
-SQLAlchemy database models for the Deep Research AI Agent.
+SQLAlchemy database models.
 
 This module defines the core data models for storing research sessions,
 facts, connections, risk flags, and search queries.
@@ -94,6 +94,8 @@ class ResearchSession(Base):
     risk_flags = relationship("RiskFlag", back_populates="session", cascade="all, delete-orphan")
     search_queries = relationship("SearchQuery", back_populates="session", cascade="all, delete-orphan")
 
+    last_checkpoint_node_name = Column(String, nullable=True) 
+    
     __table_args__ = (
         Index('idx_session_status', 'status'),
         Index('idx_session_created', 'created_at'),
@@ -134,7 +136,7 @@ class Fact(Base):
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
     # Additional context
-    extraction_method = Column(String(50), nullable=True)  # e.g., "gpt-4", "claude"
+    extraction_method = Column(String(50), nullable=True)  # e.g., "model-name"
     raw_context = Column(Text, nullable=True)  # Original text where fact was found
 
     # Relationships
@@ -275,6 +277,13 @@ class SearchQuery(Base):
             f"query='{self.query[:50]}...', results={self.results_count})>"
         )
 
+class SearchResult(Base):
+    __tablename__ = 'search_results'
+    id = Column(Integer, primary_key=True)
+    session_id = Column(String, ForeignKey('research_sessions.session_id'), nullable=False, index=True)
+    iteration = Column(Integer, nullable=False)
+    results_data = Column(JSON, nullable=False) # Store the list of result dicts
+    created_at = Column(DateTime, default=datetime.utcnow)
 
 # Helper function to create all tables
 def create_tables(engine):

@@ -1,1 +1,2 @@
-"""Prompt templates for agent nodes."""
+"""Prompt templates for nodes."""
+

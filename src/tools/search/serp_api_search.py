@@ -40,7 +40,7 @@ class SerpApiSearch:
         self.rate_limiter = rate_limiter or get_search_rate_limiter(max_concurrent=10)
         self.logger = get_logger(__name__)
 
-        self.logger.info("Initialized SerpApiSearch with rate limiting")
+        self.logger.debug("Initialized SerpApiSearch with rate limiting")
 
     @retry(
         stop=stop_after_attempt(3),
@@ -67,7 +67,7 @@ class SerpApiSearch:
 
         # Use rate limiter
         with self.rate_limiter.acquire():
-            self.logger.info(f"Searching SerpApi: '{query}' (max_results={max_results})")
+            self.logger.debug(f"Searching SerpApi: '{query}' (max_results={max_results})")
 
             # Build request parameters
             params = {
@@ -97,7 +97,7 @@ class SerpApiSearch:
                 results = self._parse_serp_response(data, query)
 
 
-                self.logger.info(f"Found {len(results)} results for '{query}'")
+                self.logger.debug(f"Found {len(results)} results for '{query}'")
 
                 return results
 
@@ -119,7 +119,7 @@ class SerpApiSearch:
         Returns:
             List[SearchResult]: All results combined (deduplicated)
         """
-        self.logger.info(f"Batch searching {len(queries)} queries")
+        self.logger.debug(f"Batch searching {len(queries)} queries")
 
         all_results = []
         for query in queries:
@@ -133,7 +133,7 @@ class SerpApiSearch:
         # Deduplicate
         deduplicated = self._deduplicate_results(all_results)
 
-        self.logger.info(
+        self.logger.debug(
             f"Batch search complete: {len(all_results)} total, "
             f"{len(deduplicated)} after deduplication"
         )

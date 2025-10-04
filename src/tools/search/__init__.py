@@ -42,10 +42,10 @@ class SearchOrchestrator:
             self.brave_search = BraveSearch(
                 api_key=self.config.search.brave_api_key
             )
-            self.logger.info("Brave Search enabled as fallback")
+            self.logger.debug("Brave Search enabled as fallback")
         else:
             self.brave_search = None
-            self.logger.info("Brave Search not configured (SerpApi only)")
+            self.logger.debug("Brave Search not configured (SerpApi only)")
 
     def search(
         self,
@@ -70,7 +70,7 @@ class SearchOrchestrator:
         Returns:
             List[SearchResult]: Combined and deduplicated results
         """
-        self.logger.info(f"Orchestrating search for: '{query}'")
+        self.logger.debug(f"Orchestrating search for: '{query}'")
 
         # 1. Try SerpApi first (primary)
         try:
@@ -78,11 +78,11 @@ class SearchOrchestrator:
 
             # If we got enough quality results, return them
             if len(results) >= 3 or not use_fallback or not self.brave_search:
-                self.logger.info(f"SerpApi returned {len(results)} results")
+                self.logger.debug(f"SerpApi returned {len(results)} results")
                 return results
 
             # 2. Supplement with Brave Search if we have few results
-            self.logger.info(
+            self.logger.debug(
                 f"Only {len(results)} results from SerpApi, "
                 f"supplementing with Brave Search"
             )
@@ -97,7 +97,7 @@ class SearchOrchestrator:
                 combined = results + brave_results
                 deduplicated = self.serp_search._deduplicate_results(combined)
 
-                self.logger.info(
+                self.logger.debug(
                     f"Returning {len(deduplicated)} combined results "
                     f"({len(results)} SerpApi + {len(brave_results)} Brave)"
                 )
@@ -117,7 +117,7 @@ class SearchOrchestrator:
                 try:
                     self.logger.warning("SerpApi failed completely, falling back to Brave Search")
                     brave_results = self.brave_search.search(query, max_results=max_results)
-                    self.logger.info(f"Brave Search fallback returned {len(brave_results)} results")
+                    self.logger.debug(f"Brave Search fallback returned {len(brave_results)} results")
                     return brave_results
                 except Exception as brave_error:
                     self.logger.error(f"Brave Search fallback also failed: {brave_error}", exc_info=True)

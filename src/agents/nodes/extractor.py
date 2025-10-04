@@ -1,8 +1,7 @@
 """
 Content Extractor Node - Extracts structured facts from search results.
 
-This node processes raw search results and extracts atomic, verified facts
-using Gemini Pro's advanced NER and extraction capabilities.
+This node processes raw search results and extracts atomic, verified facts.
 """
 
 from typing import Dict, List
@@ -29,7 +28,7 @@ from src.utils.json_parser import parse_json_object, parse_json_array
 class ContentExtractorNode:
     """
     Extracts structured facts from raw search results.
-    Uses Gemini Pro 2.5 for precise extraction with entity recognition.
+    Uses a model for precise extraction with entity recognition.
     """
 
     # Authoritative domain patterns for preliminary confidence scoring
@@ -54,7 +53,7 @@ class ContentExtractorNode:
 
     def __init__(self, config: Config, repository: ResearchRepository):
         """
-        Initialize the content extractor with Gemini Pro.
+        Initialize the content extractor.
 
         Args:
             config: Configuration object with all settings
@@ -62,8 +61,8 @@ class ContentExtractorNode:
         """
         self.config = config
         self.repository = repository
-        self.client = ModelFactory.get_optimal_model_for_task("extraction")  # Gemini Pro
-        self.flash_client = ModelFactory.get_optimal_model_for_task("categorization")  # Gemini Flash for fast categorization
+        self.client = ModelFactory.get_optimal_model_for_task("extraction")
+        self.flash_client = ModelFactory.get_optimal_model_for_task("categorization")
         self.logger = get_logger(__name__)
 
         # Load config values
@@ -101,7 +100,7 @@ class ContentExtractorNode:
             self.logger.error("No target_name provided")
             return state
 
-        self.logger.info(
+        self.logger.debug(
             f"Extracting facts from {len(raw_results)} search results for '{target_name}'"
         )
 
@@ -123,7 +122,7 @@ class ContentExtractorNode:
         collected_facts.extend(filtered_facts)
         state["collected_facts"] = collected_facts
 
-        self.logger.info(
+        self.logger.debug(
             f"Total accumulated facts: {len(collected_facts)} "
             f"(+{len(filtered_facts)} new this iteration)"
         )
@@ -156,7 +155,7 @@ class ContentExtractorNode:
         # Create batches
         batches = [results[i:i + batch_size] for i in range(0, len(results), batch_size)]
 
-        self.logger.info(
+        self.logger.debug(
             f"Processing {len(results)} results in {len(batches)} batches "
             f"(batch_size={batch_size}) with concurrency={self.max_concurrent_llm_calls}"
         )
@@ -179,7 +178,7 @@ class ContentExtractorNode:
                     try:
                         batch_facts = future.result(timeout=120)
                         all_facts.extend(batch_facts)
-                        self.logger.info(
+                        self.logger.debug(
                             f"Batch {batch_idx + 1}/{len(batches)}: Extracted {len(batch_facts)} facts"
                         )
                     except Exception as e:

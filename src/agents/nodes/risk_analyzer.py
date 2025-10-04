@@ -13,19 +13,19 @@ from src.utils.similarity import cosine_similarity
 
 class RiskAnalyzerNode:
     """
-    Analyzes validated facts for potential risks using Claude Sonnet.
+    Analyzes validated facts for potential risks.
     Includes JSON parsing, validation, deduplication, and confidence calibration.
     """
 
     # Valid severity levels
-    VALID_SEVERITIES = {"Low", "Medium", "High", "Critical"}
+    VALID_SEVERITIES = {"low", "medium", "Hhigh", "critical"}
 
     # Valid risk categories
-    VALID_CATEGORIES = {"Legal", "Financial", "Reputational", "Compliance", "Behavioral"}
+    VALID_CATEGORIES = {"legal", "financial", "reputational", "compliance", "behavioral"}
 
     def __init__(self, config: Config, repository: ResearchRepository):
         """
-        Initialize the risk analyzer with Claude Sonnet.
+        Initialize the risk analyzer.
 
         Args:
             config: Configuration object with all settings
@@ -33,10 +33,10 @@ class RiskAnalyzerNode:
         """
         self.config = config
         self.repository = repository
-        self.client = ModelFactory.get_optimal_model_for_task("risk_analysis") # Claude Sonnet
+        self.client = ModelFactory.get_optimal_model_for_task("risk_analysis")
         self.logger = get_logger(__name__)
 
-        # Get Gemini client for embeddings (for semantic deduplication)
+        # Get client for embeddings (for semantic deduplication)
         self.gemini_client = ModelFactory.get_optimal_model_for_task("extraction")
 
         # Load config values
@@ -66,7 +66,7 @@ class RiskAnalyzerNode:
                 state['risk_flags'] = []
             return state
 
-        self.logger.info(
+        self.logger.debug(
             f"Analyzing {len(new_facts)} new facts for risks "
             f"(total accumulated: {len(collected_facts)})"
         )
@@ -91,11 +91,11 @@ class RiskAnalyzerNode:
             # Validate and clean risks
             valid_risks = []
             for risk in risks:
-                validated_risk = self._validate_risk_structure(risk, new_facts)
+                validated_risk = self._validate_risk_structure(risk)
                 if validated_risk:
                     valid_risks.append(validated_risk)
 
-            self.logger.info(f"Validated {len(valid_risks)} out of {len(risks)} risks.")
+            self.logger.debug(f"Validated {len(valid_risks)} out of {len(risks)} risks.")
 
             # Calibrate confidence based on evidence
             calibrated_risks = [self._calibrate_confidence(risk, new_facts) for risk in valid_risks]
@@ -121,13 +121,13 @@ class RiskAnalyzerNode:
             session_id = state.get("session_id")
             if session_id and final_risks:
                 try:
-                    # Convert risk flags to database format
+                    # Convert risk flags to database format (lowercase enums for DB)
                     db_risks = []
                     for risk in final_risks:
                         db_risks.append({
                             "session_id": session_id,
-                            "severity": risk["severity"],
-                            "category": risk["category"],
+                            "severity": risk["severity"].lower(),
+                            "category": risk["category"].lower(),
                             "description": risk["description"],
                             "evidence": risk["evidence"],
                             "confidence": risk["confidence"],
@@ -136,7 +136,7 @@ class RiskAnalyzerNode:
 
                     # Batch save to database
                     saved_count = self.repository.save_risk_flags_batch(db_risks)
-                    self.logger.info(f"Saved {saved_count}/{len(db_risks)} risk flags to database")
+                    self.logger.debug(f"Saved {saved_count}/{len(db_risks)} risk flags to database")
 
                 except Exception as e:
                     self.logger.error(f"Failed to save risk flags to database: {e}", exc_info=True)
@@ -153,13 +153,12 @@ class RiskAnalyzerNode:
 
         return state
 
-    def _validate_risk_structure(self, risk: Dict, facts: List[Dict]) -> Optional[Dict]:
+    def _validate_risk_structure(self, risk: Dict) -> Optional[Dict]:
         """
         Validate risk structure and required fields.
 
         Args:
             risk: Risk dictionary to validate
-            facts: All collected facts for reference
 
         Returns:
             Validated risk dict or None if invalid
@@ -172,19 +171,17 @@ class RiskAnalyzerNode:
                 self.logger.warning(f"Risk missing required field '{field}': {risk}")
                 return None
 
-        # Validate and normalize severity (convert to lowercase for database enum)
+        # Validate and normalize severity (keep capitalized for internal use)
         if risk['severity'] not in self.VALID_SEVERITIES:
             self.logger.warning(f"Invalid severity '{risk['severity']}'. Defaulting to 'Medium'.")
             risk['severity'] = 'Medium'
-        # Normalize to lowercase for database compatibility
-        risk['severity'] = risk['severity'].lower()
+        # Keep capitalized internally - will be lowercased when saving to DB
 
-        # Validate and normalize category (convert to lowercase for database enum)
+        # Validate and normalize category (keep capitalized for internal use)
         if risk['category'] not in self.VALID_CATEGORIES:
             self.logger.warning(f"Invalid category '{risk['category']}'. Defaulting to 'Reputational'.")
             risk['category'] = 'Reputational'
-        # Normalize to lowercase for database compatibility
-        risk['category'] = risk['category'].lower()
+        # Keep capitalized internally - will be lowercased when saving to DB
 
         # Validate confidence
         try:

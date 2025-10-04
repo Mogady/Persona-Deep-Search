@@ -35,7 +35,7 @@ class BraveSearch:
         self.logger = get_logger(__name__)
         self.cache = {}
 
-        self.logger.info("Initialized BraveSearch with rate limiting")
+        self.logger.debug("Initialized BraveSearch with rate limiting")
 
     def search(self, query: str, max_results: int = 10) -> List[SearchResult]:
         """
@@ -56,7 +56,7 @@ class BraveSearch:
 
         # Use rate limiter
         with self.rate_limiter.acquire():
-            self.logger.info(f"Searching Brave: '{query}' (max_results={max_results})")
+            self.logger.debug(f"Searching Brave: '{query}' (max_results={max_results})")
 
             headers = {
                 "Accept": "application/json",
@@ -84,7 +84,7 @@ class BraveSearch:
                 # Cache
                 self.cache[cache_key] = results
 
-                self.logger.info(f"Found {len(results)} results from Brave")
+                self.logger.debug(f"Found {len(results)} results from Brave")
 
                 return results
 

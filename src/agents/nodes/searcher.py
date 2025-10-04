@@ -20,7 +20,7 @@ from src.database.repository import ResearchRepository
 class SearchExecutorNode:
     """
     Executes search queries and collects results.
-    Uses SearchOrchestrator (SerpApi primary, Brave fallback) with RateLimiter.
+    Uses SearchOrchestrator with RateLimiter.
     """
 
     def __init__(self, config: Config, repository: ResearchRepository):
@@ -54,7 +54,6 @@ class SearchExecutorNode:
             Updated state with:
                 - raw_search_results: List[SearchResult] (for next node)
                 - search_history: Updated with new queries
-                - current_iteration: Incremented by 1
         """
         next_queries = state.get("next_queries", [])
         current_iteration = state.get("current_iteration", 1)
@@ -74,13 +73,27 @@ class SearchExecutorNode:
         results = self._execute_queries(next_queries)
         execution_time = (time.time() - start_time) * 1000  # Convert to ms
 
-        self.logger.info(f"Retrieved {len(results)} total results in {execution_time:.0f}ms")
+        self.logger.debug(f"Retrieved {len(results)} total results in {execution_time:.0f}ms")
 
         # Deduplicate results
         deduplicated_results = self._deduplicate_results(results)
-        self.logger.info(
+        self.logger.debug(
             f"Deduplicated to {len(deduplicated_results)} unique results"
         )
+        session_id = state.get("session_id")
+        if session_id:
+            try:
+                # Convert SearchResult objects to simple dicts for JSON serialization
+                results_for_ui = [
+                    {
+                        'title': r.title, 'url': r.url, 'source_domain': r.source_domain,
+                        'content': r.content, 'score': r.score
+                    }
+                    for r in deduplicated_results
+                ]
+                self.repository.save_search_results(session_id, current_iteration, results_for_ui)
+            except Exception as e:
+                self.logger.error(f"Failed to save UI search results: {e}", exc_info=True)
 
         # Calculate metrics
         source_diversity = self._calculate_source_diversity(deduplicated_results)
@@ -109,7 +122,7 @@ class SearchExecutorNode:
                         relevance_score=relevance_score,
                         execution_time_ms=int(execution_time)
                     )
-                self.logger.info(f"Saved {len(next_queries)} search queries to database")
+                self.logger.debug(f"Saved {len(next_queries)} search queries to database")
 
             except Exception as e:
                 self.logger.error(f"Failed to save search queries to database: {e}", exc_info=True)
@@ -118,7 +131,6 @@ class SearchExecutorNode:
         # Update state
         state["raw_search_results"] = deduplicated_results
         state["search_history"] = search_history
-        state["current_iteration"] = current_iteration + 1
 
         # Track explored topics
         if "explored_topics" not in state:

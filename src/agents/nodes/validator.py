@@ -1,7 +1,7 @@
 """
 Validator Node - Validates and cross-references facts.
 
-This node uses Claude Sonnet for complex reasoning to validate facts,
+This node uses a model for complex reasoning to validate facts,
 detect contradictions, and adjust confidence scores.
 """
 
@@ -27,7 +27,7 @@ from src.utils.json_parser import parse_json_object
 
 class ValidatorNode:
     """
-    Validates and cross-references facts using Claude Sonnet for complex reasoning.
+    Validates and cross-references facts using complex reasoning.
     Adjusts confidence scores based on multiple factors.
     """
 
@@ -54,7 +54,7 @@ class ValidatorNode:
 
     def __init__(self, config: Config, repository: ResearchRepository):
         """
-        Initialize the validator with Claude Sonnet.
+        Initialize the validator.
 
         Args:
             config: Configuration object with all settings
@@ -62,8 +62,8 @@ class ValidatorNode:
         """
         self.config = config
         self.repository = repository
-        self.client = ModelFactory.get_optimal_model_for_task("complex_reasoning")  # Claude
-        # Also get Gemini for embeddings
+        self.client = ModelFactory.get_optimal_model_for_task("complex_reasoning")
+        # Also get a client for embeddings
         self.gemini_client = ModelFactory.get_optimal_model_for_task("extraction")
         self.logger = get_logger(__name__)
 
@@ -153,7 +153,7 @@ class ValidatorNode:
 
                 # Batch save to database
                 saved_count = self.repository.save_facts_batch(db_facts)
-                self.logger.info(f"Saved {saved_count}/{len(db_facts)} validated facts to database")
+                self.logger.debug(f"Saved {saved_count}/{len(db_facts)} validated facts to database")
 
             except Exception as e:
                 self.logger.error(f"Failed to save facts to database: {e}", exc_info=True)

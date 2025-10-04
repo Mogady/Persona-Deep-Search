@@ -1,7 +1,7 @@
 """
-AI Models module for the Deep Research Agent.
+AI Models module.
 
-This module provides a unified interface for accessing AI models (Gemini and Anthropic)
+This module provides a unified interface for accessing AI models
 through a factory pattern. Clients are created based on model names for maximum flexibility.
 """
 
@@ -56,7 +56,7 @@ class ModelFactory:
                 model_name=model_name
             )
             ModelFactory._clients[model_name] = client
-            logger.info(f"Created new GeminiClient for model: {model_name}")
+            logger.debug(f"Created new GeminiClient for model: {model_name}")
             return client
 
         elif "claude" in model_name.lower():
@@ -67,7 +67,7 @@ class ModelFactory:
                 model_name=model_name
             )
             ModelFactory._clients[model_name] = client
-            logger.info(f"Created new AnthropicClient for model: {model_name}")
+            logger.debug(f"Created new AnthropicClient for model: {model_name}")
             return client
 
         else:
@@ -132,7 +132,7 @@ class ModelFactory:
             )
             model_name = config.ai_models.gemini_pro_model
 
-        logger.info(f"Selected model '{model_name}' for task: {task_type}")
+        logger.debug(f"Selected model '{model_name}' for task: {task_type}")
 
         return ModelFactory.create_client(model_name)
 
@@ -145,7 +145,7 @@ class ModelFactory:
         of clients (e.g., after configuration changes).
         """
         ModelFactory._clients = {}
-        logger.info("Reset all model client instances")
+        logger.debug("Reset all model client instances")
 
 
 # Import client classes for direct access

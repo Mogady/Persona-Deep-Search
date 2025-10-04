@@ -1,5 +1,5 @@
 """
-Unified Gemini client supporting all Gemini models (Pro, Flash, etc.).
+Unified Gemini client supporting all Gemini models.
 
 This module provides a flexible client that can work with any Gemini model
 by accepting the model name as a parameter.
@@ -45,7 +45,7 @@ class GeminiClient:
         genai.configure(api_key=self.api_key)
         self.model = genai.GenerativeModel(self.model_name)
 
-        self.logger.info(f"Initialized GeminiClient with model: {self.model_name}, max_retries: {self.max_retries}")
+        self.logger.debug(f"Initialized GeminiClient with model: {self.model_name}, max_retries: {self.max_retries}")
 
     @retry(
         stop=stop_after_attempt(3),  # Will be made dynamic in _call_api_with_retry
@@ -102,30 +102,6 @@ class GeminiClient:
             self.logger.error(f"API error: {e}")
             raise
 
-    def _log_token_usage(self, response: Any, operation: str) -> None:
-        """
-        Extract and log token counts from API response.
-
-        Args:
-            response: API response object
-            operation: Name of the operation (for logging)
-        """
-        try:
-            if hasattr(response, 'usage_metadata') and response.usage_metadata:
-                usage = response.usage_metadata
-                self.logger.info(
-                    f"{operation} token usage",
-                    extra={
-                        "operation": operation,
-                        "model": self.model_name,
-                        "input_tokens": usage.prompt_token_count,
-                        "output_tokens": usage.candidates_token_count,
-                        "total_tokens": usage.total_token_count
-                    }
-                )
-        except Exception as e:
-            self.logger.warning(f"Could not extract token usage: {e}")
-
     def generate(
         self,
         prompt: str,
@@ -147,7 +123,7 @@ class GeminiClient:
             Exception: If generation fails
         """
         try:
-            self.logger.info(
+            self.logger.debug(
                 "Generating text",
                 extra={
                     "prompt_length": len(prompt),
@@ -169,13 +145,10 @@ class GeminiClient:
                 generation_config
             )
 
-            # Log token usage
-            self._log_token_usage(response, "generate")
-
             # Extract text from response
             generated_text = response.text
 
-            self.logger.info(
+            self.logger.debug(
                 "Text generation complete",
                 extra={"response_length": len(generated_text)}
             )
@@ -207,7 +180,7 @@ class GeminiClient:
             ValueError: If response doesn't match schema
         """
         try:
-            self.logger.info(
+            self.logger.debug(
                 "Generating structured output",
                 extra={
                     "prompt_length": len(prompt),
@@ -220,9 +193,6 @@ class GeminiClient:
 
             response = self._call_api_with_retry(json_prompt, system_instruction)
 
-            # Log token usage
-            self._log_token_usage(response, "generate_structured")
-
             # Parse JSON from response (using unified parser)
             result = parse_json_object(response.text)
 
@@ -232,7 +202,7 @@ class GeminiClient:
                     if key not in result:
                         self.logger.warning(f"Missing key in response: {key}")
 
-            self.logger.info("Structured generation complete")
+            self.logger.debug("Structured generation complete")
 
             return result
 
@@ -258,7 +228,7 @@ class GeminiClient:
             List[dict]: List of entities with type and text
         """
         try:
-            self.logger.info(
+            self.logger.debug(
                 "Extracting entities",
                 extra={"text_length": len(text)}
             )
@@ -283,15 +253,12 @@ class GeminiClient:
 
             response = self._call_api_with_retry(prompt)
 
-            # Log token usage
-            self._log_token_usage(response, "extract_entities")
-
             # Parse JSON from response (using unified parser)
             result = parse_json_object(response.text)
 
             entities = result.get("entities", [])
 
-            self.logger.info(
+            self.logger.debug(
                 "Entity extraction complete",
                 extra={"entities_count": len(entities)}
             )
@@ -321,7 +288,7 @@ class GeminiClient:
             List[dict]: List of fact dictionaries
         """
         try:
-            self.logger.info(
+            self.logger.debug(
                 "Extracting facts",
                 extra={
                     "text_length": len(text),
@@ -332,34 +299,31 @@ class GeminiClient:
             context_str = f"\nContext: {context}" if context else ""
 
             prompt = f"""Extract all verifiable facts from the following text.
-{context_str}
+                        {context_str}
 
-For each fact:
-1. State the fact clearly
-2. Categorize it as: biographical, professional, financial, or behavioral
-3. Assign a confidence score (0.0 to 1.0) based on how definitive the statement is
-4. List any entities (people, organizations, locations) mentioned in the fact
+                        For each fact:
+                        1. State the fact clearly
+                        2. Categorize it as: biographical, professional, financial, or behavioral
+                        3. Assign a confidence score (0.0 to 1.0) based on how definitive the statement is
+                        4. List any entities (people, organizations, locations) mentioned in the fact
 
-Text: {text}
+                        Text: {text}
 
-Respond with JSON in this format:
-```json
-{{
-    "facts": [
-        {{
-            "content": "John Doe was CEO of Acme Corp from 2015 to 2020",
-            "category": "professional",
-            "confidence": 0.9,
-            "entities": ["John Doe", "Acme Corp", "2015", "2020"]
-        }}
-    ]
-}}
-```"""
+                        Respond with JSON in this format:
+                        ```json
+                        {{
+                            "facts": [
+                                {{
+                                    "content": "John Doe was CEO of Acme Corp from 2015 to 2020",
+                                    "category": "professional",
+                                    "confidence": 0.9,
+                                    "entities": ["John Doe", "Acme Corp", "2015", "2020"]
+                                }}
+                            ]
+                        }}
+                                    ```"""
 
             response = self._call_api_with_retry(prompt)
-
-            # Log token usage
-            self._log_token_usage(response, "extract_facts")
 
             # Parse JSON from response (using unified parser)
             result = parse_json_object(response.text)
@@ -383,7 +347,7 @@ Respond with JSON in this format:
 
                     validated_facts.append(fact)
 
-            self.logger.info(
+            self.logger.debug(
                 "Fact extraction complete",
                 extra={"facts_count": len(validated_facts)}
             )
@@ -426,7 +390,7 @@ Respond with JSON in this format:
             collected_facts = context.get("collected_facts", [])
             explored_topics = context.get("explored_topics", set())
 
-            self.logger.info(
+            self.logger.debug(
                 "Generating search queries",
                 extra={
                     "target_name": target_name,
@@ -482,9 +446,6 @@ Respond with JSON in this format:
 
             response = self._call_api_with_retry(prompt, generation_config=generation_config)
 
-            # Log token usage
-            self._log_token_usage(response, "generate_search_queries")
-
             # Parse queries from response
             response_text = response.text.strip()
 
@@ -506,7 +467,7 @@ Respond with JSON in this format:
                 # Take only requested number of queries
                 queries = queries[:num_queries]
 
-                self.logger.info(
+                self.logger.debug(
                     "Search queries generated",
                     extra={"queries_count": len(queries)}
                 )
@@ -531,7 +492,7 @@ Respond with JSON in this format:
                 queries = queries[:num_queries]
 
                 if queries:
-                    self.logger.info(
+                    self.logger.debug(
                         "Search queries extracted manually",
                         extra={"queries_count": len(queries)}
                     )
@@ -578,7 +539,7 @@ Respond with JSON in this format:
             max_content_length = 2000
             truncated_content = content[:max_content_length]
 
-            self.logger.info(
+            self.logger.debug(
                 "Filtering content relevance",
                 extra={
                     "content_length": len(content),
@@ -606,15 +567,12 @@ Respond with JSON in this format:
 
             response = self._call_api_with_retry(prompt, generation_config=generation_config)
 
-            # Log token usage
-            self._log_token_usage(response, "filter_relevant_content")
-
             # Parse response
             decision = response.text.strip().upper()
 
             is_relevant = "YES" in decision
 
-            self.logger.info(
+            self.logger.debug(
                 "Content filtering complete",
                 extra={
                     "is_relevant": is_relevant,
@@ -653,7 +611,7 @@ Respond with JSON in this format:
             Exception: If embedding generation fails
         """
         try:
-            self.logger.info(f"Generating embeddings for {len(texts)} texts")
+            self.logger.debug(f"Generating embeddings for {len(texts)} texts")
 
             # Use the embedding model (gemini-embedding-001)
             embeddings = []
@@ -663,9 +621,9 @@ Respond with JSON in this format:
                 content=[texts],
                 task_type=task_type
             )
-            embeddings= [res['embedding'] for res in results['embedding']]
+            embeddings= [res for res in results["embedding"]]
 
-            self.logger.info(
+            self.logger.debug(
                 f"Generated {len(embeddings)} embeddings, "
                 f"dimension: {len(embeddings[0]) if embeddings else 0}"
             )
@@ -687,7 +645,7 @@ Respond with JSON in this format:
         temperature: float = 0.1
     ) -> Dict[str, List[str]]:
         """
-        Extract named entities using Gemini's advanced understanding.
+        Extract named entities using advanced understanding.
         More accurate than regex-based extraction.
 
         Args:
@@ -701,7 +659,7 @@ Respond with JSON in this format:
             Exception: If entity extraction fails
         """
         try:
-            self.logger.info("Extracting entities using Gemini NER")
+            self.logger.debug("Extracting entities using advanced NER")
 
             prompt = f"""Extract all named entities from the following text.
 
@@ -733,9 +691,6 @@ Respond with JSON in this format:
 
             response = self._call_api_with_retry(prompt, generation_config=generation_config)
 
-            # Log token usage
-            self._log_token_usage(response, "extract_entities_advanced")
-
             # Parse JSON response (using unified parser)
             entities = parse_json_object(response.text)
 
@@ -748,7 +703,7 @@ Respond with JSON in this format:
                 if key not in entities or not isinstance(entities[key], list):
                     entities[key] = []
 
-            self.logger.info(
+            self.logger.debug(
                 f"Extracted entities: "
                 f"{len(entities['people'])} people, "
                 f"{len(entities['companies'])} companies, "

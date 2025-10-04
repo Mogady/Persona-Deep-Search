@@ -24,6 +24,7 @@ from .models import (
     FactCategory,
     RiskSeverity,
     RiskCategory,
+    SearchResult
 )
 
 logger = logging.getLogger(__name__)
@@ -52,7 +53,7 @@ class ResearchRepository:
         """
         self.engine = create_engine(database_url, echo=echo, pool_pre_ping=True)
         self.SessionLocal = sessionmaker(bind=self.engine, autoflush=False, autocommit=False)
-        logger.info(f"Database repository initialized with URL: {database_url}")
+        logger.debug(f"Database repository initialized with URL: {database_url}")
 
     def create_tables(self) -> None:
         """Create all database tables."""
@@ -196,7 +197,7 @@ class ResearchRepository:
                 if error_message:
                     research_session.error_message = error_message
 
-                logger.info(f"Updated session {session_id} status to {status.value}")
+                logger.debug(f"Updated session {session_id} status to {status.value}")
                 return True
 
         except SQLAlchemyError as e:
@@ -272,7 +273,7 @@ class ResearchRepository:
                     research_session.connection_graph = connection_graph
                 research_session.updated_at = datetime.now()
 
-                logger.info(f"Saved final report for session {session_id}")
+                logger.debug(f"Saved final report for session {session_id}")
                 return True
 
         except SQLAlchemyError as e:
@@ -311,6 +312,8 @@ class ResearchRepository:
                     research_session.status = SessionStatus.IN_PROGRESS
                     research_session.started_at = datetime.now()
 
+                # ALWAYS update the checkpoint node name (not just when PENDING)
+                research_session.last_checkpoint_node_name = node_name
                 research_session.updated_at = datetime.now()
 
                 logger.debug(f"Checkpoint saved for session {session_id} after {node_name}")
@@ -422,7 +425,7 @@ class ResearchRepository:
                 ]
                 session.bulk_save_objects(fact_objects)
 
-                logger.info(f"Batch saved {len(facts)} facts")
+                logger.debug(f"Batch saved {len(facts)} facts")
                 return len(facts)
 
         except SQLAlchemyError as e:
@@ -532,7 +535,7 @@ class ResearchRepository:
                 ]
                 session.bulk_save_objects(connection_objects)
 
-                logger.info(f"Batch saved {len(connections)} connections")
+                logger.debug(f"Batch saved {len(connections)} connections")
                 return len(connections)
 
         except SQLAlchemyError as e:
@@ -620,21 +623,39 @@ class ResearchRepository:
         """
         try:
             with self.get_session() as session:
-                risk_objects = [
-                    RiskFlag(
-                        session_id=r["session_id"],
-                        severity=r["severity"],
-                        category=r["category"],
-                        description=r["description"],
-                        evidence=r["evidence"],
-                        confidence_score=r["confidence"],
-                        mitigation_notes=r.get("recommended_follow_up"),
+                risk_objects = []
+                for r in risks:
+                    # Convert lowercase string to enum member
+                    severity_str = r["severity"]
+                    category_str = r["category"]
+
+                    try:
+                        severity_enum = RiskSeverity[severity_str]
+                    except KeyError:
+                        logger.warning(f"Invalid severity '{r['severity']}', defaulting to MEDIUM")
+                        severity_enum = RiskSeverity.MEDIUM
+
+                    try:
+                        category_enum = RiskCategory[category_str]
+                    except KeyError:
+                        logger.warning(f"Invalid category '{r['category']}', defaulting to OTHER")
+                        category_enum = RiskCategory.OTHER
+
+                    risk_objects.append(
+                        RiskFlag(
+                            session_id=r["session_id"],
+                            severity=severity_enum,
+                            category=category_enum,
+                            description=r["description"],
+                            evidence=r["evidence"],
+                            confidence_score=r["confidence"],
+                            mitigation_notes=r.get("recommended_follow_up"),
+                        )
                     )
-                    for r in risks
-                ]
+
                 session.bulk_save_objects(risk_objects)
 
-                logger.info(f"Batch saved {len(risks)} risk flags")
+                logger.debug(f"Batch saved {len(risks)} risk flags")
                 return len(risks)
 
         except SQLAlchemyError as e:
@@ -746,7 +767,33 @@ class ResearchRepository:
         except SQLAlchemyError as e:
             logger.error(f"Failed to get searches: {e}")
             return []
+    def save_search_results(self, session_id: str, iteration: int, results: List[Dict]):
+        """Saves search results specifically for the UI to consume."""
+        with self.get_session() as session:
+            try:
+                db_results = SearchResult(
+                    session_id=session_id,
+                    iteration=iteration,
+                    results_data=results
+                )
+                session.add(db_results)
+                session.commit()
+                logger.debug(f"Saved {len(results)} search results for UI (iteration {iteration})")
+            except Exception as e:
+                session.rollback()
+                logger.error(f"Failed to save UI search results: {e}", exc_info=True)
 
+    # ADD THIS method to retrieve results for the UI
+    def get_search_results(self, session_id: str, iteration: int) -> List[Dict]:
+        """Retrieves search results for a specific iteration for the UI."""
+        with self.get_session() as session:
+            results_obj = session.query(SearchResult).filter_by(
+                session_id=session_id,
+                iteration=iteration
+            ).first()
+            if results_obj:
+                return results_obj.results_data
+            return []
     # ==================== Aggregate Queries ====================
 
     def get_session_summary(self, session_id: str) -> Optional[Dict[str, Any]]:

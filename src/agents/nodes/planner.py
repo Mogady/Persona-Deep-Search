@@ -25,12 +25,12 @@ from src.prompts.templates.planner_prompt import (
 class QueryPlannerNode:
     """
     Generates intelligent search queries using progressive search strategy.
-    Uses Gemini Flash 2.5 for fast query generation.
+    Uses a model for fast query generation.
     """
 
     def __init__(self, config: Config, repository: ResearchRepository):
         """
-        Initialize the query planner with Gemini Flash client.
+        Initialize the query planner.
 
         Args:
             config: Configuration object with all settings
@@ -110,7 +110,7 @@ class QueryPlannerNode:
         Returns:
             List of broad discovery queries
         """
-        self.logger.info(f"Generating broad discovery queries for: {target_name}")
+        self.logger.debug(f"Generating broad discovery queries for: {target_name}")
 
         prompt = BROAD_DISCOVERY_PROMPT.format(target_name=target_name)
 
@@ -128,7 +128,7 @@ class QueryPlannerNode:
                     f'"{target_name}" education'
                 ]
 
-            self.logger.info(f"Generated {len(queries)} broad queries")
+            self.logger.debug(f"Generated {len(queries)} broad queries")
             return queries
 
         except Exception as e:
@@ -157,13 +157,24 @@ class QueryPlannerNode:
         Returns:
             List of targeted investigation queries
         """
-        self.logger.info(f"Generating targeted queries for: {target_name}")
+        self.logger.debug(f"Generating targeted queries for: {target_name}")
 
         # Extract entities from facts
         entities = self._extract_entities(facts)
 
         # Create facts summary
-        facts_summary = "\n".join(facts[:10])  # Top 10 facts
+        facts_summary = "\n".join([fact.get('content', '') for fact in facts[:10]])  # Top 10 facts
+
+        # Convert explored_topics to strings (in case dicts were added)
+        explored_topics_str = []
+        for topic in list(explored_topics)[:10]:
+            if isinstance(topic, str):
+                explored_topics_str.append(topic)
+            elif isinstance(topic, dict):
+                # Extract meaningful string from dict (e.g., query text)
+                explored_topics_str.append(topic.get("query", str(topic)))
+            else:
+                explored_topics_str.append(str(topic))
 
         prompt = TARGETED_INVESTIGATION_PROMPT.format(
             target_name=target_name,
@@ -171,7 +182,7 @@ class QueryPlannerNode:
             people=", ".join(entities.get("people", [])),
             companies=", ".join(entities.get("companies", [])),
             locations=", ".join(entities.get("locations", [])),
-            explored_topics=", ".join(list(explored_topics)[:10])
+            explored_topics=", ".join(explored_topics_str)
         )
 
         try:
@@ -187,7 +198,7 @@ class QueryPlannerNode:
                     f'"{target_name}" "{company}" achievements'
                 ]
 
-            self.logger.info(f"Generated {len(queries)} targeted queries")
+            self.logger.debug(f"Generated {len(queries)} targeted queries")
             return queries
 
         except Exception as e:
@@ -209,7 +220,7 @@ class QueryPlannerNode:
         Returns:
             List of connection mining queries
         """
-        self.logger.info(f"Generating connection queries for: {target_name}")
+        self.logger.debug(f"Generating connection queries for: {target_name}")
 
         # Extract entities from facts
         entities = self._extract_entities(facts)
@@ -232,7 +243,7 @@ class QueryPlannerNode:
                     f'"{target_name}" investments'
                 ]
 
-            self.logger.info(f"Generated {len(queries)} connection queries")
+            self.logger.debug(f"Generated {len(queries)} connection queries")
             return queries
 
         except Exception as e:
@@ -254,7 +265,7 @@ class QueryPlannerNode:
         Returns:
             List of validation queries
         """
-        self.logger.info(f"Generating validation queries for: {target_name}")
+        self.logger.debug(f"Generating validation queries for: {target_name}")
 
         # Find low-confidence facts (< 0.7)
         low_confidence_facts = [
@@ -287,7 +298,7 @@ class QueryPlannerNode:
                     f'"{target_name}" authoritative source'
                 ]
 
-            self.logger.info(f"Generated {len(queries)} validation queries")
+            self.logger.debug(f"Generated {len(queries)} validation queries")
             return queries
 
         except Exception as e:
@@ -301,7 +312,7 @@ class QueryPlannerNode:
     ) -> List[str]:
         """
         Remove queries similar to previous searches using semantic similarity.
-        Uses Gemini embeddings for cosine similarity calculation.
+        Uses embeddings for cosine similarity calculation.
 
         Args:
             queries: Candidate queries
@@ -321,7 +332,7 @@ class QueryPlannerNode:
         try:
             # Use semantic similarity with embeddings
             filtered = self._filter_with_embeddings(queries, previous_queries)
-            self.logger.info(
+            self.logger.debug(
                 f"Filtered {len(queries) - len(filtered)} duplicate/similar queries "
                 f"using semantic similarity"
             )
@@ -338,7 +349,7 @@ class QueryPlannerNode:
         previous_queries: List[str]
     ) -> List[str]:
         """
-        Filter queries using cosine similarity with Gemini embeddings.
+        Filter queries using cosine similarity with embeddings.
 
         Args:
             queries: Candidate queries
@@ -412,7 +423,7 @@ class QueryPlannerNode:
                 f.get("content", "") for f in facts
             ])
 
-            # Use Gemini's advanced entity extraction
+            # Use advanced entity extraction
             entities = self.client.extract_entities_advanced(combined_text)
 
             # Limit results

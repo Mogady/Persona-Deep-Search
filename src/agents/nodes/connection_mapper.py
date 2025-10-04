@@ -16,7 +16,7 @@ from src.utils.similarity import cosine_similarity
 
 class ConnectionMapperNode:
     """
-    Maps relationships between entities found in the facts using Gemini Pro.
+    Maps relationships between entities found in the facts.
     Includes JSON parsing, validation, deduplication, and bidirectional handling.
     """
 
@@ -54,7 +54,7 @@ class ConnectionMapperNode:
 
     def __init__(self, config: Config, repository: ResearchRepository):
         """
-        Initialize the connection mapper with Gemini Pro.
+        Initialize the connection mapper.
 
         Args:
             config: Configuration object with all settings
@@ -62,10 +62,10 @@ class ConnectionMapperNode:
         """
         self.config = config
         self.repository = repository
-        self.client = ModelFactory.get_optimal_model_for_task("connection_mapping") # Gemini Pro
+        self.client = ModelFactory.get_optimal_model_for_task("connection_mapping")
         self.logger = get_logger(__name__)
 
-        # Get Gemini client for embeddings (for semantic deduplication)
+        # Get client for embeddings (for semantic deduplication)
         self.gemini_client = ModelFactory.get_optimal_model_for_task("extraction")
 
         # Load config values
@@ -75,8 +75,8 @@ class ConnectionMapperNode:
         # Initialize rate limiter for LLM API calls
         self.rate_limiter = get_llm_rate_limiter(max_concurrent=self.max_concurrent_llm_calls)
 
-        self.logger.info(
-            f"Initialized ConnectionMapperNode with Gemini Pro and RateLimiter "
+        self.logger.debug(
+            f"Initialized ConnectionMapperNode with RateLimiter "
             f"(temp: {self.temperature}, concurrency: {self.max_concurrent_llm_calls})"
         )
 
@@ -103,7 +103,7 @@ class ConnectionMapperNode:
                 state['connections'] = []
             return state
 
-        self.logger.info(
+        self.logger.debug(
             f"Mapping connections from {len(new_facts)} new facts "
             f"(total accumulated: {len(collected_facts)})"
         )
@@ -145,7 +145,7 @@ class ConnectionMapperNode:
                 if validated_conn:
                     valid_connections.append(validated_conn)
 
-            self.logger.info(f"Validated {len(valid_connections)} out of {len(connections)} connections.")
+            self.logger.debug(f"Validated {len(valid_connections)} out of {len(connections)} connections.")
 
             # Calibrate confidence based on evidence
             calibrated_connections = [self._calibrate_confidence(conn, new_facts) for conn in valid_connections]
@@ -185,7 +185,7 @@ class ConnectionMapperNode:
 
                     # Batch save to database
                     saved_count = self.repository.save_connections_batch(db_connections)
-                    self.logger.info(f"Saved {saved_count}/{len(db_connections)} connections to database")
+                    self.logger.debug(f"Saved {saved_count}/{len(db_connections)} connections to database")
 
                 except Exception as e:
                     self.logger.error(f"Failed to save connections to database: {e}", exc_info=True)
