@@ -212,7 +212,7 @@ class ResearchWorkflow:
         self.logger.info(f"Starting research for: {target_name} (session: {session_id})")
 
         try:
-            final_state = self.graph.invoke(initial_state)
+            final_state = self.graph.invoke(initial_state ,{"recursion_limit": 100})
 
             self.logger.info(f"Research complete for {target_name}")
             self.logger.info(f"Facts: {len(final_state.get('collected_facts', []))}")

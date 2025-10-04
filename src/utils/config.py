@@ -207,7 +207,6 @@ class Config:
         # Application Configuration
         application = ApplicationConfig(
             max_search_iterations=int(os.getenv("MAX_SEARCH_ITERATIONS")),
-            research_timeout_minutes=int(os.getenv("RESEARCH_TIMEOUT_MINUTES")),
             log_level=os.getenv("LOG_LEVEL"),
             debug_mode=os.getenv("DEBUG_MODE").lower() == "true",
             environment=os.getenv("ENVIRONMENT"),

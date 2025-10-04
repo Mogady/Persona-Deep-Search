@@ -4,6 +4,7 @@ Rich, real-time interface showing all background operations with full transparen
 """
 
 import chainlit as cl
+import time
 import asyncio
 from datetime import datetime
 from typing import Dict, Any, List
@@ -589,7 +590,7 @@ Type **'start'** to begin the investigation."""
 
 async def start_research():
     """Initialize and run the research workflow"""
-    
+    research_successful = False
     target_name = cl.user_session.get("target_name")
     settings = cl.user_session.get("settings", {})
     research_depth = settings.get("research_depth", 7)
@@ -687,6 +688,9 @@ Your research session has finished. """ + (f"Check the final report above for de
             ).send()
         except Exception as e2:
             logger.error(f"Failed to send completion message: {e2}")
+
+        research_successful = True
+
     except Exception as e:
         logger.error(f"Research failed: {e}")
         await cl.Message(
@@ -696,7 +700,8 @@ Your research session has finished. """ + (f"Check the final report above for de
 
     finally:
         # Reset for next research
-        cl.user_session.set("awaiting_start", True)
+        if research_successful:
+            cl.user_session.set("awaiting_start", True)
 
 async def monitor_research_progress(
     research_task: asyncio.Task,
@@ -720,6 +725,7 @@ async def monitor_research_progress(
 
         current_iteration = full_state.get('iteration', 0)
         current_node_name = full_state.get('current_node')
+        last_heartbeat_time = time.time()
 
         # Skip if no node name
         if not current_node_name:
@@ -796,6 +802,17 @@ async def monitor_research_progress(
 
         last_processed_node_key = node_key
         last_seen_node = current_node_name
+
+        now = time.time()
+        if now - last_heartbeat_time > 20:  # Send a heartbeat every 20 seconds
+            if current_iteration in iteration_steps:
+                step = iteration_steps[current_iteration]
+                # Add a subtle pulsating dot animation to the step output to create network traffic
+                dots = "." * (int(now) % 4)
+                original_text = f"🔄 Iteration {current_iteration}/{research_depth}"
+                step.output = f"{original_text}{dots}"
+                await step.update()
+            last_heartbeat_time = now
 
     # Mark final node as completed when research is done
     if last_processed_node_key and last_processed_node_key in node_steps:

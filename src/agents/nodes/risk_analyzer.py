@@ -18,10 +18,10 @@ class RiskAnalyzerNode:
     """
 
     # Valid severity levels
-    VALID_SEVERITIES = {"low", "medium", "Hhigh", "critical"}
+    VALID_SEVERITIES = {"Low", "Medium", "High", "Critical"}
 
     # Valid risk categories
-    VALID_CATEGORIES = {"legal", "financial", "reputational", "compliance", "behavioral"}
+    VALID_CATEGORIES = {"Legal", "Financial", "Reputational", "Compliance", "Behavioral"}
 
     def __init__(self, config: Config, repository: ResearchRepository):
         """
@@ -172,13 +172,13 @@ class RiskAnalyzerNode:
                 return None
 
         # Validate and normalize severity (keep capitalized for internal use)
-        if risk['severity'] not in self.VALID_SEVERITIES:
+        if risk['severity'].lower().title() not in self.VALID_SEVERITIES:
             self.logger.warning(f"Invalid severity '{risk['severity']}'. Defaulting to 'Medium'.")
             risk['severity'] = 'Medium'
         # Keep capitalized internally - will be lowercased when saving to DB
 
         # Validate and normalize category (keep capitalized for internal use)
-        if risk['category'] not in self.VALID_CATEGORIES:
+        if risk['category'].lower().title() not in self.VALID_CATEGORIES:
             self.logger.warning(f"Invalid category '{risk['category']}'. Defaulting to 'Reputational'.")
             risk['category'] = 'Reputational'
         # Keep capitalized internally - will be lowercased when saving to DB
