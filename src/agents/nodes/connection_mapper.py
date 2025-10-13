@@ -1,7 +1,6 @@
 from typing import Dict, List, Optional, Set, Tuple
 from datetime import datetime
 from collections import defaultdict
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from src.tools.models import ModelFactory
 from src.utils.logger import get_logger
 from src.utils.config import Config

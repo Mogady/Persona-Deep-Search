@@ -7,7 +7,7 @@ BROAD_DISCOVERY_PROMPT = """Generate 3-5 search queries for: {target_name}
 Focus: Professional role, companies, news, education, social media.
 
 Unique specific queries. Different angles (LinkedIn, news, sites).
-
+Each query should have the target name and clear entities for better results 
 IMPORTANT: Return ONLY a JSON array of strings. No explanations, no markdown code blocks, no additional text.
 Format: ["query 1", "query 2", "query 3"]
 
@@ -21,6 +21,7 @@ Facts: {facts_summary}
 Entities - People: {people} | Companies: {companies} | Locations: {locations}
 
 Generate 3-5 NEW queries: Dig into companies/roles, verify timeline, find connections, investigate locations.
+Each query should have the target name and clear entities for better results 
 
 Avoid: {explored_topics}
 
@@ -33,6 +34,7 @@ CONNECTION_MINING_PROMPT = """Map networks for: {target_name}
 People: {people} | Companies: {companies}
 
 Generate 3-5 queries: Boards, partnerships, investments, family, shared affiliations.
+Each query should have the target name and clear entities for better results 
 
 IMPORTANT: Return ONLY a JSON array of strings. No explanations, no markdown code blocks, no additional text.
 Format: ["query 1", "query 2", "query 3"]
@@ -43,6 +45,7 @@ VALIDATION_PROMPT = """Verify info for: {target_name}
 Low-confidence facts: {low_confidence_facts}
 
 Generate 3-5 queries: Find more sources, resolve contradictions, authoritative (.gov/.edu/major news).
+Each query should have the target name and clear entities for better results 
 
 IMPORTANT: Return ONLY a JSON array of strings. No explanations, no markdown code blocks, no additional text.
 Format: ["query 1", "query 2", "query 3"]

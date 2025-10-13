@@ -284,27 +284,3 @@ class SearchResult(Base):
     iteration = Column(Integer, nullable=False)
     results_data = Column(JSON, nullable=False) # Store the list of result dicts
     created_at = Column(DateTime, default=datetime.utcnow)
-
-# Helper function to create all tables
-def create_tables(engine):
-    """
-    Create all database tables.
-
-    Args:
-        engine: SQLAlchemy engine instance
-    """
-    Base.metadata.create_all(engine)
-
-
-# Helper function to drop all tables (use with caution!)
-def drop_tables(engine):
-    """
-    Drop all database tables.
-
-    Args:
-        engine: SQLAlchemy engine instance
-
-    Warning:
-        This will delete all data. Use only for testing/development.
-    """
-    Base.metadata.drop_all(engine)

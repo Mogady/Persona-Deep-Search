@@ -107,10 +107,7 @@ class ResearchWorkflow:
         if current_iteration > 1 and facts_after == facts_before:
             self.logger.info("No new facts found in the last iteration. Generating report.")
             return "report"
-            
-        if facts_after == 0 and current_iteration > 3:
-            self.logger.warning("No facts discovered after 3 iterations. Stopping.")
-            return "report"
+
 
         return "continue"
 
@@ -199,8 +196,7 @@ class ResearchWorkflow:
             "raw_search_results": [],
             "start_time": datetime.now(),
             "last_update": None,
-            "final_report": None,
-            "connection_graph": None
+            "final_report": None
         }
 
         self.repository.create_session(
