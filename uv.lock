@@ -456,6 +456,9 @@ requires-dist = [
     { name = "tenacity", specifier = ">=9.1.2" },
 ]
 
+[package.metadata.requires-dev]
+datalayer = []
+
 [[package]]
 name = "fastapi"
 version = "0.116.2"

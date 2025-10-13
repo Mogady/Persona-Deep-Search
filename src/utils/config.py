@@ -65,31 +65,6 @@ class ApplicationConfig:
 
 
 @dataclass
-class GCPConfig:
-    """Google Cloud Platform configuration."""
-    project_id: Optional[str] = None
-    region: str = "us-central1"
-    use_secret_manager: bool = False
-    secret_manager_project: Optional[str] = None
-    storage_bucket: Optional[str] = None
-    enable_gcs_storage: bool = False
-
-
-
-
-@dataclass
-class LoggingConfig:
-    """Logging configuration."""
-    log_file_path: str = "logs/research.log"
-    structured_logging: bool = True
-    log_max_bytes: int = 10485760  # 10MB
-    log_backup_count: int = 5
-    enable_audit_log: bool = True
-    audit_log_path: str = "logs/audit.log"
-    anonymize_logs: bool = True
-
-
-@dataclass
 class PerformanceConfig:
     """Performance tuning settings."""
     extraction_batch_size: int = 10
@@ -116,15 +91,6 @@ class PerformanceConfig:
     default_max_tokens: int = 4096
     report_max_tokens: int = 8192
     structured_output_max_tokens: int = 4096
-
-
-@dataclass
-class ChainlitConfig:
-    """Chainlit UI configuration."""
-    host: str = "0.0.0.0"
-    port: int = 8000
-    debug: bool = False
-
 
 @dataclass
 class Config:

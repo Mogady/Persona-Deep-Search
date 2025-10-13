@@ -5,10 +5,8 @@ Provides semaphore-based rate limiting for API calls to prevent
 overwhelming external services.
 """
 
-import asyncio
-import time
 from typing import Optional
-from contextlib import asynccontextmanager, contextmanager
+from contextlib import  contextmanager
 import logging
 from threading import Semaphore
 
@@ -96,88 +94,6 @@ class RateLimiter:
     def __repr__(self) -> str:
         return (
             f"<RateLimiter(name='{self.name}', "
-            f"max_concurrent={self.max_concurrent}, "
-            f"active={self._active_requests})>"
-        )
-
-
-class AsyncRateLimiter:
-    """
-    Async rate limiter based on concurrent request count.
-
-    Uses asyncio.Semaphore to limit the number of concurrent async requests.
-    """
-
-    def __init__(self, max_concurrent: int = 10, name: str = "async_rate_limiter"):
-        """
-        Initialize the async rate limiter.
-
-        Args:
-            max_concurrent: Maximum number of concurrent requests allowed
-            name: Name for logging purposes
-        """
-        self.max_concurrent = max_concurrent
-        self.name = name
-        self.semaphore = asyncio.Semaphore(max_concurrent)
-        self._active_requests = 0
-
-        logger.info(
-            f"Initialized {self.name} with max_concurrent={max_concurrent}"
-        )
-
-    @asynccontextmanager
-    async def acquire(self):
-        """
-        Async context manager for rate-limited operations.
-
-        Usage:
-            async with rate_limiter.acquire():
-                # Make API call here
-                result = await api_call()
-
-        Yields:
-            None
-        """
-        try:
-            # Acquire semaphore
-            await self.semaphore.acquire()
-            self._active_requests += 1
-
-            logger.debug(
-                f"{self.name}: Acquired slot ({self._active_requests}/{self.max_concurrent} active)"
-            )
-
-            yield
-
-        finally:
-            self._active_requests -= 1
-            self.semaphore.release()
-
-            logger.debug(
-                f"{self.name}: Released slot ({self._active_requests}/{self.max_concurrent} active)"
-            )
-
-    def available_slots(self) -> int:
-        """
-        Get number of available slots.
-
-        Returns:
-            int: Number of available request slots
-        """
-        return self.max_concurrent - self._active_requests
-
-    def is_available(self) -> bool:
-        """
-        Check if rate limiter has available slots.
-
-        Returns:
-            bool: True if slots are available
-        """
-        return self.available_slots() > 0
-
-    def __repr__(self) -> str:
-        return (
-            f"<AsyncRateLimiter(name='{self.name}', "
             f"max_concurrent={self.max_concurrent}, "
             f"active={self._active_requests})>"
         )

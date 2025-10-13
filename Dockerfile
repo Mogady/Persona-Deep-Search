@@ -67,6 +67,8 @@ COPY --chown=appuser:appuser pyproject.toml .
 RUN mkdir -p /app/logs /app/reports && \
     chown -R appuser:appuser /app/logs /app/reports
 
+COPY --chown=appuser:appuser .chainlit /app/.chainlit
+
 # Change ownership of the entire app directory to the non-root user
 RUN chown -R appuser:appuser /app
 

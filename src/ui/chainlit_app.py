@@ -720,12 +720,10 @@ async def monitor_research_progress(
     while not research_task.done():
         await asyncio.sleep(0.5)
 
-        # This line now safely unpacks the two return values
         changes, full_state = monitor.get_state_changes()
 
         current_iteration = full_state.get('iteration', 0)
         current_node_name = full_state.get('current_node')
-        last_heartbeat_time = time.time()
 
         # Skip if no node name
         if not current_node_name:
@@ -803,16 +801,6 @@ async def monitor_research_progress(
         last_processed_node_key = node_key
         last_seen_node = current_node_name
 
-        now = time.time()
-        if now - last_heartbeat_time > 20:  # Send a heartbeat every 20 seconds
-            if current_iteration in iteration_steps:
-                step = iteration_steps[current_iteration]
-                # Add a subtle pulsating dot animation to the step output to create network traffic
-                dots = "." * (int(now) % 4)
-                original_text = f"🔄 Iteration {current_iteration}/{research_depth}"
-                step.output = f"{original_text}{dots}"
-                await step.update()
-            last_heartbeat_time = now
 
     # Mark final node as completed when research is done
     if last_processed_node_key and last_processed_node_key in node_steps:
