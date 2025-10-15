@@ -221,7 +221,7 @@ class ValidatorNode:
                 similarities[i] = cosine_similarity(embeddings_array[i], embeddings_array)
 
             # Group facts by similarity threshold
-            similarity_threshold = 0.85  # High threshold for similar facts
+            similarity_threshold = 0.65  # High threshold for similar facts
             groups = self._cluster_by_similarity(similarities, similarity_threshold)
 
             # Build fact groups dictionary
